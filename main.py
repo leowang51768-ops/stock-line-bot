@@ -4,14 +4,14 @@ import pandas as pd
 import yfinance as yf
 
 # 從 GitHub Secrets 讀取金鑰
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 LINE_USER_ID = os.getenv('LINE_USER_ID')
 
 def send_line_message(msg):
     url = 'https://api.line.me/v2/bot/message/push'
     headers = {
         'Content-Type': 'application/json',
-        'Authorization': f'Bearer {LINE_CHANNEL_ACCESS_TOKEN}'
+        'Authorization': f'Bearer {LINE_ACCESS_TOKEN}'
     }
     payload = {
         'to': LINE_USER_ID,
