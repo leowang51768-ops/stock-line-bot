@@ -4,7 +4,8 @@ import pandas as pd
 import yfinance as yf
 
 # 從 GitHub Secrets 讀取金鑰
-LINE_ACCESS_TOKEN = 'DC+apyzRfcYrD4KCoj2s+yD6OqMXUEPJliy6BbHRP4ymqycS3hiSWuO1eMJpIDf1yPJyvazonGtwBMC2j8AelHYNgbKppzzVE8CJdkVWPfiZ/VG9QIrcrs6nBaQyrtxlB/mvNkdq3/rX/oKLAMaE6gdB04t89/1O/w1cDnyiIFU='
+dJ/nmm07oXD1DIrt9CVfEvkbkRF+cTKR0Nbm9cNGVmhjtcSLU6+USSDrpkY8mSARyPJyvazonGtwBMC2j8AelHYNgbKppzzVE8CJdkVWPfjhjr9REk8l17Ms39kNGhKnm4gsXAFXzxbl0vgcVtbQ0QdB04t89/1O/w1cDnyilFU=
+dq3/rX/oKLAMaE6gdB04t89/1O/w1cDnyiIFU='
 
 LINE_USER_ID = os.getenv('LINE_USER_ID')
 
