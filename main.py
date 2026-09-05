@@ -3,9 +3,9 @@ import requests
 import pandas as pd
 import yfinance as yf
 
-# LINE 授權設定（使用 .strip() 徹底清除前後隱藏空白與換行）
+# LINE 授權設定
 LINE_ACCESS_TOKEN = 'dJ/nmm07oXD1DIrt9CVfEvkbkRF+cTKR0Nbm9cNGVmhjtcSLU6+USSDrpkY8mSARyPJyvazonGtwBMC2j8AelHYNgbKppzzVE8CJdkVWPfjhjr9REk8l17Ms39kNGhKnm4gsXAFXzxbl0vgcVtbQ0QdB04t89/1O/w1cDnyilFU='.strip()
-LINE_USER_ID = 'Ucab8145cf7e5c1ee3e38ee2f58c1d46'.strip()
+LINE_USER_ID = 'Ucab81458cf7e5c1ee3e38ee2f58c1d46'.strip()
 
 def send_line_message(msg):
     if not msg or str(msg).strip() == '':
