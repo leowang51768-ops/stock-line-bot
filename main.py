@@ -4,7 +4,8 @@ import pandas as pd
 import yfinance as yf
 
 # 從 GitHub Secrets 讀取金鑰
-LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
+LINE_ACCESS_TOKEN = 'DC+apyzRfcYrD4KCoj2s+yD6OqMXUEPJliy6BbHRP4ymqycS3hiSWuO1eMJpIDf1yPJyvazonGtwBMC2j8AelHYNgbKppzzVE8CJdkVWPfiZ/VG9QIrcrs6nBaQyrtxlB/mvNkdq3/rX/oKLAMaE6gdB04t89/1O/w1cDnyiIFU='
+
 LINE_USER_ID = os.getenv('LINE_USER_ID')
 
 def send_line_message(msg):
