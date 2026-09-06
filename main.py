@@ -2,6 +2,7 @@ import os
 import requests
 import pandas as pd
 import yfinance as yf
+from datetime import datetime
 
 # 從 GitHub Secrets 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -28,7 +29,6 @@ def send_line_message(msg):
     return response.status_code
 
 def check_price_action():
-    # 70家公司完整清單
     stocks_to_track = {
         '2330.TW': '台積電', '6669.TW': '緯穎', '2317.TW': '鴻海', '2382.TW': '廣達', '2454.TW': '聯發科',
         '3443.TW': '創意', '2449.TW': '京元電子', '2383.TW': '台光電', '3653.TW': '健策', '3008.TW': '大立光',
@@ -46,46 +46,62 @@ def check_price_action():
         '4967.TWO': '十銓', '2313.TW': '華通', '8358.TWO': '金居', '3680.TWO': '家登', '3583.TW': '辛耘'
     }
     
-    signals = []
+    engulfing_signals = []
+    spring_signals = []
     tickers = list(stocks_to_track.keys())
     
-    print("⏳ 正在批次下載股價資料...")
+    print("⏳ 正在批次下載股價與成交量資料...")
     try:
-        # 批次下載，大幅縮短執行時間與避免逾時
-        data = yf.download(tickers, period='5d', group_by='ticker', threads=True, progress=False)
+        data = yf.download(tickers, period='6d', group_by='ticker', threads=True, progress=False)
     except Exception as e:
         print(f"❌ 批次下載失敗: {e}")
-        return f"📊 【Price Action 今日選股推播】\n\n系統下載資料發生異常。"
+        return f"📊 【Price Action 選股推播】\n\n系統下載資料發生異常。"
 
     for ticker, stock_name in stocks_to_track.items():
         try:
             df = data[ticker].dropna()
-            if len(df) < 2:
+            if len(df) < 6: # 需要至少 6 天來計算 5 日均量
                 continue
 
             prev = df.iloc[-2]
             curr = df.iloc[-1]
             pure_code = ticker.split('.')[0]
+            
+            # 計算前 5 日平均成交量（不含今天）
+            avg_volume_5d = df['Volume'].iloc[-6:-1].mean()
+            # 判斷今天是否帶量（成交量大於 5 日均量）
+            is_volume_up = curr['Volume'] > avg_volume_5d
 
+            # 1. 看漲吞噬（加上成交量過濾：需帶量或至少成交量放大）
             if (prev['Close'] < prev['Open']) and (curr['Close'] > curr['Open']) and \
-               (curr['Close'] >= prev['Open']) and (curr['Open'] <= prev['Close']):
-                signals.append(f"🟢 {stock_name}({pure_code})：出現【看漲吞噬】訊號")
+               (curr['Close'] >= prev['Open']) and (curr['Open'] <= prev['Close']) and is_volume_up:
+                engulfing_signals.append(f"• {stock_name} ({pure_code})")
 
-            elif (curr['Low'] < prev['Low']) and (curr['Close'] > prev['Close']):
-                signals.append(f"🚀 {stock_name}({pure_code})：出現【破底翻/強勢拉回】訊號")
+            # 2. 破底翻 / 強勢拉回（加上成交量過濾：需帶量收紅）
+            elif (curr['Low'] < prev['Low']) and (curr['Close'] > curr['Open']) and \
+                 (curr['Close'] > prev['Close']) and is_volume_up:
+                spring_signals.append(f"• {stock_name} ({pure_code})")
 
         except Exception as e:
             print(f"⚠️ 處理 {ticker} ({stock_name}) 時發生錯誤: {e}")
             pass
 
-    if signals:
-        message = f"📊 【Price Action 今日選股推播 (共 {len(stocks_to_track)} 檔)】\n\n" + "\n".join(signals)
-    else:
-        message = f"📊 【Price Action 今日選股推播 (共 {len(stocks_to_track)} 檔)】\n\n今日無符合訊號之標的。"
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    message = f"📊 【Price Action 盤後篩選】\n📅 日期：{today_str}\n追蹤標的：{len(stocks_to_track)} 檔\n━━━━━━━━━━━━━━━\n"
+
+    if engulfing_signals:
+        message += f"\n🟢 【看漲吞噬 (帶量)】 (共 {len(engulfing_signals)} 檔)\n" + "\n".join(engulfing_signals) + "\n"
+    
+    if spring_signals:
+        message += f"\n🚀 【破底翻/強勢拉回 (帶量)】 (共 {len(spring_signals)} 檔)\n" + "\n".join(spring_signals) + "\n"
+
+    if not engulfing_signals and not spring_signals:
+        message += "\n今日無符合「帶量突破」條件之標的。"
 
     return message
 
 if __name__ == '__main__':
     msg = check_price_action()
+    print(msg)
     status = send_line_message(msg)
     print(f"LINE Notification Status: {status}")
