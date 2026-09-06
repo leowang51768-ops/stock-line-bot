@@ -3,63 +3,78 @@ import requests
 import pandas as pd
 import yfinance as yf
 
-# LINE 授權設定（使用確認正確的專屬 ID）
-LINE_ACCESS_TOKEN = 'dJ/nmm07oXD1DIrt9CVfEvkbkRF+cTKR0Nbm9cNGVmhjtcSLU6+USSDrpkY8mSARyPJyvazonGtwBMC2j8AelHYNgbKppzzVE8CJdkVWPfjhjr9REk8l17Ms39kNGhKnm4gsXAFXzxbl0vgcVtbQ0QdB04t89/1O/w1cDnyilFU='.strip()
-LINE_USER_ID = 'Ucab81458cf7e5c1ee3e38ee2f58c1d46'.strip()
+# 從 GitHub Secrets 讀取金鑰
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+LINE_USER_ID = os.getenv('LINE_USER_ID')
 
 def send_line_message(msg):
-    if not msg or str(msg).strip() == '':
-        msg = "今日無符合策略之台股選股訊號。"
-
     url = 'https://api.line.me/v2/bot/message/push'
     headers = {
         'Content-Type': 'application/json',
-        'Authorization': f'Bearer {LINE_ACCESS_TOKEN}'
+        'Authorization': f'Bearer {LINE_CHANNEL_ACCESS_TOKEN}'
     }
     payload = {
         'to': LINE_USER_ID,
-        'messages': [{'type': 'text', 'text': str(msg)}]
+        'messages': [{'type': 'text', 'text': msg}]
     }
     response = requests.post(url, json=payload, headers=headers)
-    print(f"LINE Notification Status: {response.status_code}")
-    print(f"LINE Response Detail: {response.text}")
     return response.status_code
 
-def analyze_breakout_strategy():
-    watchlist = ['2330.TW', '2317.TW', '2454.TW', '2308.TW']
+def check_price_action():
+    # 70家公司觀察標的清單（包含 yfinance 代號與中文名稱）
+    # 上市使用 .TW，上櫃使用 .TWO
+    stocks_to_track = {
+        '2330.TW': '台積電', '6669.TW': '緯穎', '2317.TW': '鴻海', '2382.TW': '廣達', '2454.TW': '聯發科',
+        '3443.TW': '創意', '2449.TW': '京元電子', '2383.TW': '台光電', '3653.TW': '健策', '3008.TW': '大立光',
+        '3661.TW': '世芯-KY', '3264.TWO': '欣銓', '3231.TW': '緯創', '3017.TW': '奇鋐', '2345.TW': '智邦',
+        '6488.TWO': '環球晶', '5483.TWO': '中美晶', '3711.TW': '日月光投控', '2356.TW': '英業達', '2376.TW': '技嘉',
+        '6274.TW': '台燿', '2368.TW': '金像電', '8046.TW': '南電', '4958.TW': '臻鼎-KY', '6213.TW': '聯茂',
+        '3037.TW': '欣興', '3481.TW': '群創', '3324.TWO': '雙鴻', '2421.TW': '建準', '2308.TW': '台達電',
+        '2301.TW': '光寶科', '6282.TW': '康舒', '3665.TW': '貿聯-KY', '3533.TW': '嘉澤', '5388.TWO': '中磊',
+        '6285.TW': '啟碁', '4908.TWO': '前鼎', '3105.TWO': '穩懋', '3234.TWO': '光環', '4979.TWO': '華星光',
+        '3163.TWO': '波若威', '4977.TWO': '眾達-KY', '2408.TW': '南亞科', '2344.TW': '華邦電', '2337.TW': '旺宏',
+        '3374.TW': '精材', '6139.TW': '亞翔', '6187.TW': '萬潤', '2049.TW': '上銀', '1590.TW': '亞德客-KY',
+        '1504.TW': '東元', '2359.TW': '所羅門', '3022.TW': '威強電', '4576.TWO': '大銀微系統', '2464.TW': '盟立',
+        '3491.TWO': '昇達科', '8039.TWO': '台虹', '8086.TWO': '宏捷科', '2634.TW': '漢翔', '8033.TWO': '雷虎',
+        '2324.TW': '仁寶', '6781.TW': 'AES-KY', '3211.TWO': '順達', '4931.TWO': '新盛力', '8271.TWO': '宇瞻',
+        '4967.TWO': '十銓', '2313.TW': '華通', '8358.TWO': '金居', '3680.TW': '家登', '3583.TW': '辛耘'
+    }
+    
     signals = []
 
-    for ticker in watchlist:
+    for ticker, stock_name in stocks_to_track.items():
         try:
-            df = yf.download(ticker, period='60d', interval='1d', progress=False)
-            if df.empty or len(df) < 30:
+            stock = yf.Ticker(ticker)
+            df = stock.history(period='5d')
+            if len(df) < 2:
                 continue
+
+            # 取最近兩日 K 線資料
+            prev = df.iloc[-2]
+            curr = df.iloc[-1]
             
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
+            pure_code = ticker.split('.')[0]
 
-            close = df['Close']
-            volume = df['Volume']
+            # Price Action 訊號判斷 1: 看漲吞噬 (Bullish Engulfing)
+            if (prev['Close'] < prev['Open']) and (curr['Close'] > curr['Open']) and \
+               (curr['Close'] >= prev['Open']) and (curr['Open'] <= prev['Close']):
+                signals.append(f"🟢 {stock_name}({pure_code})：出現【看漲吞噬】訊號")
 
-            recent_high = close.iloc[-21:-1].max()
-            avg_volume = volume.iloc[-21:-1].mean()
+            # Price Action 訊號判斷 2: 破底翻 / 破前低收高 (Pinbar)
+            elif (curr['Low'] < prev['Low']) and (curr['Close'] > prev['Close']):
+                signals.append(f"🚀 {stock_name}({pure_code})：出現【破底翻/強勢拉回】訊號")
 
-            current_close = close.iloc[-1]
-            current_vol = volume.iloc[-1]
-
-            if current_close > recent_high and current_vol > (avg_volume * 1.2):
-                signals.append(f"🔥 【突破訊號】{ticker}\n- 現價: {current_close:.2f}\n- 突破 20 日高點: {recent_high:.2f}\n- 量能放大確認")
-        
         except Exception as e:
-            print(f"Error processing {ticker}: {e}")
+            print(f"Error checking {ticker}: {e}")
 
     if signals:
-        message = "📊 今日台股突破/破底翻策略掃描結果：\n\n" + "\n\n".join(signals)
+        message = f"📊 【Price Action 今日選股推播 (共 {len(stocks_to_track)} 檔)】\n\n" + "\n".join(signals)
     else:
-        message = "📊 今日台股掃描完畢：無標的同時符合突破與量價效率條件。"
+        message = f"📊 【Price Action 今日選股推播 (共 {len(stocks_to_track)} 檔)】\n\n今日無符合訊號之標的。"
 
     return message
 
 if __name__ == '__main__':
-    stock_report = analyze_breakout_strategy()
-    send_line_message(stock_report)
+    msg = check_price_action()
+    status = send_line_message(msg)
+    print(f"LINE Notification Status: {status}")
