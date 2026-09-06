@@ -13,15 +13,17 @@ if not LINE_ACCESS_TOKEN:
 else:
     print(f"✅ 成功讀取 Token (字串長度: {len(LINE_ACCESS_TOKEN)})")
 
-def send_line_message(msg):
+def send_line_messages(msg_list):
+    """一次發送多則訊息（LINE Bot API 支援單次最多 5 則）"""
     url = 'https://api.line.me/v2/bot/message/push'
     headers = {
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {LINE_ACCESS_TOKEN}'
     }
+    messages_payload = [{'type': 'text', 'text': m} for m in msg_list]
     payload = {
         'to': LINE_USER_ID,
-        'messages': [{'type': 'text', 'text': msg}]
+        'messages': messages_payload
     }
     response = requests.post(url, json=payload, headers=headers)
     print(f"LINE API Response Status: {response.status_code}")
@@ -45,7 +47,7 @@ def check_market_trend():
         print(f"⚠️ 取得大盤資訊失敗: {e}")
         return 0.0, "異常"
 
-def check_price_action():
+def generate_stock_report():
     market_chg, market_status = check_market_trend()
     print(f"📈 今日大盤漲跌幅: {market_chg}%")
 
@@ -75,7 +77,7 @@ def check_price_action():
         data = yf.download(tickers, period='6d', group_by='ticker', threads=True, progress=False)
     except Exception as e:
         print(f"❌ 批次下載失敗: {e}")
-        return f"📊 【Price Action 選股推播】\n\n系統下載資料發生異常。"
+        return ["📊 【Price Action 選股推播】\n\n系統下載資料發生異常。"]
 
     for ticker, stock_name in stocks_to_track.items():
         try:
@@ -94,10 +96,9 @@ def check_price_action():
             vol_ratio = curr['Volume'] / avg_volume_5d if avg_volume_5d > 0 else 1.0
             is_volume_up = curr['Volume'] > avg_volume_5d
 
-            # 導入第 3 點：在資訊中加入型態勝率參考與結構化描述
             # 1. 看漲吞噬
             if (prev['Close'] < prev['Open']) and (curr['Close'] > curr['Open']) and \
-               (curr['Close'] >= prev['Open']) and (curr['Open'] <= prev['Open']) and is_volume_up:
+               (curr['Close'] >= prev['Open']) and (curr['Close'] <= prev['Open']) and is_volume_up:
                 line_str = f"▪ {stock_name} ({pure_code})\n  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n  💡 特性：帶量吞噬 (參考勝率 ~58%)"
                 engulfing_signals.append(line_str)
 
@@ -113,40 +114,50 @@ def check_price_action():
 
     today_str = datetime.now().strftime('%Y-%m-%d')
     
-    # 導入第 1 點：卡片式視覺排版（透過區塊與符號強化閱讀層級）
+    # 訊息第一則：大盤看板與風控狀態
     market_warning = ""
     if market_chg <= -1.5:
-        market_warning = "🚨 【風控注意】大盤重挫逾 1.5%，系統性風險高，建議縮小部位或暫緩多方進場。\n"
+        market_warning = "🚨 【風控注意】大盤重挫逾 1.5%，系統性風險高，建議縮小部位或暫緩多方進場。"
     elif market_chg < 0:
-        market_warning = "⚠️ 【盤勢提醒】大盤震盪收黑，操作請嚴設停損。\n"
+        market_warning = "⚠️ 【盤勢提醒】大盤震盪收黑，操作請嚴設停損。"
     else:
-        market_warning = "🟢 【盤勢狀態】大盤穩健，有利順勢多方操作。\n"
+        market_warning = "🟢 【盤勢狀態】大盤穩健，有利順勢多方操作。"
 
-    message = f"╔══════════════════╗\n" \
-              f"  📊 Price Action 盤後策略看板\n" \
-              f"╚══════════════════╝\n" \
-              f"📅 日期：{today_str}\n" \
-              f"📈 加權指數：{market_chg:+.2f}%\n" \
-              f"----------------------------------\n" \
-              f"{market_warning}" \
-              f"----------------------------------"
+    msg_part1 = (
+        f"╔══════════════════╗\n"
+        f"  📊 Price Action 盤後策略看板\n"
+        f"╚══════════════════╝\n"
+        f"📅 日期：{today_str}\n"
+        f"📈 加權指數：{market_chg:+.2f}%\n"
+        f"----------------------------------\n"
+        f"{market_warning}"
+    )
 
+    # 訊息第二則：個股篩選清單與統計
+    msg_part2_body = []
     if engulfing_signals:
-        message += f"\n\n🟢 【看漲吞噬訊號】(共 {len(engulfing_signals)} 檔)\n" + "\n\n".join(engulfing_signals)
+        msg_part2_body.append(f"🟢 【看漲吞噬訊號】(共 {len(engulfing_signals)} 檔)\n\n" + "\n\n".join(engulfing_signals))
     
     if spring_signals:
-        message += f"\n\n🚀 【破底翻/強勢拉回】(共 {len(spring_signals)} 檔)\n" + "\n\n".join(spring_signals)
+        msg_part2_body.append(f"🚀 【破底翻/強勢拉回】(共 {len(spring_signals)} 檔)\n\n" + "\n\n".join(spring_signals))
 
     if not engulfing_signals and not spring_signals:
-        message += "\n\n☕ 今日無符合嚴格量價條件之標的，保持耐心觀望。"
+        msg_part2_body.append("☕ 今日無符合嚴格量價條件之標的，保持耐心觀望。")
 
-    message += f"\n\n----------------------------------\n" \
-               f"🔍 追蹤標的總數：{len(stocks_to_track)} 檔"
+    msg_part2 = (
+        f"📋 【篩選結果明細】\n"
+        f"----------------------------------\n\n" +
+        "\n\n".join(msg_part2_body) +
+        f"\n\n----------------------------------\n"
+        f"🔍 追蹤標的總數：{len(stocks_to_track)} 檔"
+    )
 
-    return message
+    return [msg_part1, msg_part2]
 
 if __name__ == '__main__':
-    msg = check_price_action()
-    print(msg)
-    status = send_line_message(msg)
+    messages = generate_stock_report()
+    for m in messages:
+        print(m)
+        print("="*30)
+    status = send_line_messages(messages)
     print(f"LINE Notification Status: {status}")
