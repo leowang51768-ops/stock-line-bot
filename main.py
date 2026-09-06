@@ -28,7 +28,7 @@ def send_line_message(msg):
     return response.status_code
 
 def check_price_action():
-    # 70家公司完整清單（已將 4977 改為 .TW、8358 改為 .TWO）
+    # 70家公司完整清單
     stocks_to_track = {
         '2330.TW': '台積電', '6669.TW': '緯穎', '2317.TW': '鴻海', '2382.TW': '廣達', '2454.TW': '聯發科',
         '3443.TW': '創意', '2449.TW': '京元電子', '2383.TW': '台光電', '3653.TW': '健策', '3008.TW': '大立光',
@@ -47,11 +47,19 @@ def check_price_action():
     }
     
     signals = []
+    tickers = list(stocks_to_track.keys())
+    
+    print("⏳ 正在批次下載股價資料...")
+    try:
+        # 批次下載，大幅縮短執行時間與避免逾時
+        data = yf.download(tickers, period='5d', group_by='ticker', threads=True, progress=False)
+    except Exception as e:
+        print(f"❌ 批次下載失敗: {e}")
+        return f"📊 【Price Action 今日選股推播】\n\n系統下載資料發生異常。"
 
     for ticker, stock_name in stocks_to_track.items():
         try:
-            stock = yf.Ticker(ticker)
-            df = stock.history(period='5d')
+            df = data[ticker].dropna()
             if len(df) < 2:
                 continue
 
@@ -67,6 +75,7 @@ def check_price_action():
                 signals.append(f"🚀 {stock_name}({pure_code})：出現【破底翻/強勢拉回】訊號")
 
         except Exception as e:
+            print(f"⚠️ 處理 {ticker} ({stock_name}) 時發生錯誤: {e}")
             pass
 
     if signals:
