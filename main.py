@@ -3,20 +3,20 @@ import requests
 import pandas as pd
 import yfinance as yf
 
-# 從 GitHub Secrets 讀取金鑰
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+# 從 GitHub Secrets 讀取金鑰（已改為 LINE_ACCESS_TOKEN）
+LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 LINE_USER_ID = os.getenv('LINE_USER_ID')
 
-if not LINE_CHANNEL_ACCESS_TOKEN:
-    print("⚠️ 警告：未讀取到 LINE_CHANNEL_ACCESS_TOKEN，請檢查 GitHub Actions 的 env 設定！")
+if not LINE_ACCESS_TOKEN:
+    print("⚠️ 警告：未讀取到 LINE_ACCESS_TOKEN，請檢查 GitHub Actions 的 env 設定！")
 else:
-    print(f"✅ 成功讀取 Token (字串長度: {len(LINE_CHANNEL_ACCESS_TOKEN)})")
+    print(f"✅ 成功讀取 Token (字串長度: {len(LINE_ACCESS_TOKEN)})")
 
 def send_line_message(msg):
     url = 'https://api.line.me/v2/bot/message/push'
     headers = {
         'Content-Type': 'application/json',
-        'Authorization': f'Bearer {LINE_CHANNEL_ACCESS_TOKEN}'
+        'Authorization': f'Bearer {LINE_ACCESS_TOKEN}'
     }
     payload = {
         'to': LINE_USER_ID,
@@ -28,7 +28,7 @@ def send_line_message(msg):
     return response.status_code
 
 def check_price_action():
-    # 70家公司完整清單（已將家登 3680 修正為 .TWO）
+    # 70家公司完整清單（已全數修正完畢）
     stocks_to_track = {
         '2330.TW': '台積電', '6669.TW': '緯穎', '2317.TW': '鴻海', '2382.TW': '廣達', '2454.TW': '聯發科',
         '3443.TW': '創意', '2449.TW': '京元電子', '2383.TW': '台光電', '3653.TW': '健策', '3008.TW': '大立光',
@@ -41,7 +41,7 @@ def check_price_action():
         '3163.TWO': '波若威', '4977.TW': '眾達-KY', '2408.TW': '南亞科', '2344.TW': '華邦電', '2337.TW': '旺宏',
         '3374.TWO': '精材', '6139.TW': '亞翔', '6187.TWO': '萬潤', '2049.TW': '上銀', '1590.TW': '亞德客-KY',
         '1504.TW': '東元', '2359.TW': '所羅門', '3022.TW': '威強電', '4576.TW': '大銀微系統', '2464.TW': '盟立',
-        '3491.TWO': '昇達科', '8039.TW': '台虹', '8086.TWO': '宏捷科', '2634.TW': '漢翔', '8033.TWO': '雷虎',
+        '3491.TWO': '昇達科', '8039.TW': '台虹', '8086.TWO': '宏捷科', '2634.TW': '漢翔', '8033.TW': '雷虎',
         '2324.TW': '仁寶', '6781.TW': 'AES-KY', '3211.TWO': '順達', '4931.TWO': '新盛力', '8271.TW': '宇瞻',
         '4967.TW': '十銓', '2313.TW': '華通', '8358.TWO': '金居', '3680.TWO': '家登', '3583.TW': '辛耘'
     }
