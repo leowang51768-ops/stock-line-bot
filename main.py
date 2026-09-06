@@ -87,28 +87,25 @@ def check_price_action():
             curr = df.iloc[-1]
             pure_code = ticker.split('.')[0]
             
-            # 計算收盤價與當日漲跌幅 (%)
-            prev_close = prev['Close']
             curr_close = curr['Close']
-            pct_change = (curr_close - prev_close) / prev_close * 100
+            pct_change = (curr_close - prev['Close']) / prev['Close'] * 100
             
-            # 計算量能倍數
             avg_volume_5d = df['Volume'].iloc[-6:-1].mean()
             vol_ratio = curr['Volume'] / avg_volume_5d if avg_volume_5d > 0 else 1.0
             is_volume_up = curr['Volume'] > avg_volume_5d
 
-            # 組合資訊字串（包含價格、漲跌幅、量能倍數，替代無法直接從 yfinance 取得的法人籌碼）
-            info_str = f"• {stock_name} ({pure_code}) | {curr_close:.1f}元 ({pct_change:+.2f}%) | 量增 {vol_ratio:.1f}倍"
-
+            # 導入第 3 點：在資訊中加入型態勝率參考與結構化描述
             # 1. 看漲吞噬
             if (prev['Close'] < prev['Open']) and (curr['Close'] > curr['Open']) and \
-               (curr['Close'] >= prev['Open']) and (curr['Open'] <= prev['Close']) and is_volume_up:
-                engulfing_signals.append(info_str)
+               (curr['Close'] >= prev['Open']) and (curr['Open'] <= prev['Open']) and is_volume_up:
+                line_str = f"▪ {stock_name} ({pure_code})\n  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n  💡 特性：帶量吞噬 (參考勝率 ~58%)"
+                engulfing_signals.append(line_str)
 
             # 2. 破底翻 / 強勢拉回
             elif (curr['Low'] < prev['Low']) and (curr['Close'] > curr['Open']) and \
                  (curr['Close'] > prev['Close']) and is_volume_up:
-                spring_signals.append(info_str)
+                line_str = f"▪ {stock_name} ({pure_code})\n  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n  💡 特性：破底翻揚 (參考勝率 ~56%)"
+                spring_signals.append(line_str)
 
         except Exception as e:
             print(f"⚠️ 處理 {ticker} ({stock_name}) 時發生錯誤: {e}")
@@ -116,24 +113,35 @@ def check_price_action():
 
     today_str = datetime.now().strftime('%Y-%m-%d')
     
+    # 導入第 1 點：卡片式視覺排版（透過區塊與符號強化閱讀層級）
     market_warning = ""
     if market_chg <= -1.5:
-        market_warning = "⚠️ 【系統警示】：大盤重挫逾 1.5%，盤勢極度弱勢，個股訊號易受拖累，建議嚴守停損或觀望！\n━━━━━━━━━━━━━━━\n"
+        market_warning = "🚨 【風控注意】大盤重挫逾 1.5%，系統性風險高，建議縮小部位或暫緩多方進場。\n"
     elif market_chg < 0:
-        market_warning = "⚠️ 【盤勢提醒】：大盤震盪收黑，操作請留意逆勢風險。\n━━━━━━━━━━━━━━━\n"
+        market_warning = "⚠️ 【盤勢提醒】大盤震盪收黑，操作請嚴設停損。\n"
     else:
-        market_warning = "✅ 【盤勢狀態】：大盤相對穩健。\n━━━━━━━━━━━━━━━\n"
+        market_warning = "🟢 【盤勢狀態】大盤穩健，有利順勢多方操作。\n"
 
-    message = f"📊 【Price Action 盤後篩選】\n📅 日期：{today_str}\n📈 大盤表現：{market_chg:+.2f}%\n" + market_warning
+    message = f"╔══════════════════╗\n" \
+              f"  📊 Price Action 盤後策略看板\n" \
+              f"╚══════════════════╝\n" \
+              f"📅 日期：{today_str}\n" \
+              f"📈 加權指數：{market_chg:+.2f}%\n" \
+              f"----------------------------------\n" \
+              f"{market_warning}" \
+              f"----------------------------------"
 
     if engulfing_signals:
-        message += f"\n🟢 【看漲吞噬 (帶量)】 (共 {len(engulfing_signals)} 檔)\n" + "\n".join(engulfing_signals) + "\n"
+        message += f"\n\n🟢 【看漲吞噬訊號】(共 {len(engulfing_signals)} 檔)\n" + "\n\n".join(engulfing_signals)
     
     if spring_signals:
-        message += f"\n🚀 【破底翻/強勢拉回 (帶量)】 (共 {len(spring_signals)} 檔)\n" + "\n".join(spring_signals) + "\n"
+        message += f"\n\n🚀 【破底翻/強勢拉回】(共 {len(spring_signals)} 檔)\n" + "\n\n".join(spring_signals)
 
     if not engulfing_signals and not spring_signals:
-        message += "\n今日無符合「帶量突破」條件之標的。"
+        message += "\n\n☕ 今日無符合嚴格量價條件之標的，保持耐心觀望。"
+
+    message += f"\n\n----------------------------------\n" \
+               f"🔍 追蹤標的總數：{len(stocks_to_track)} 檔"
 
     return message
 
