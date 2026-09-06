@@ -2,8 +2,9 @@ name: Daily Stock Price Action Push
 
 on:
   schedule:
+    # 國際標準時間 (UTC) 08:00 等於 台灣時間 (UTC+8) 16:00，週一至週五執行
     - cron: '0 8 * * 1-5'
-  workflow_dispatch:
+  workflow_dispatch: # 支援在 GitHub 介面上手動點擊測試
 
 jobs:
   run-bot:
