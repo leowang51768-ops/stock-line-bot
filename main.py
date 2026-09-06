@@ -18,6 +18,7 @@ def send_line_message(msg):
         'messages': [{'type': 'text', 'text': msg}]
     }
     response = requests.post(url, json=payload, headers=headers)
+    print(f"LINE API Response Status: {response.status_code}")
     print(f"LINE API Response Body: {response.text}")
     return response.status_code
 
@@ -32,11 +33,11 @@ def check_price_action():
         '2301.TW': '光寶科', '6282.TW': '康舒', '3665.TW': '貿聯-KY', '3533.TW': '嘉澤', '5388.TW': '中磊',
         '6285.TW': '啟碁', '4908.TWO': '前鼎', '3105.TWO': '穩懋', '3234.TWO': '光環', '4979.TWO': '華星光',
         '3163.TWO': '波若威', '4977.TW': '眾達-KY', '2408.TW': '南亞科', '2344.TW': '華邦電', '2337.TW': '旺宏',
-        '3374.TWO': '精材', '6139.TW': '亞翔', '6187.TWO': '萬潤', '2049.TW': '上銀', '1590.TW': '亞德客-KY',
+        '3374.TWO': '精材', '6139.TW': '亞翔', '6187.TW': '萬潤', '2049.TW': '上銀', '1590.TW': '亞德客-KY',
         '1504.TW': '東元', '2359.TW': '所羅門', '3022.TW': '威強電', '4576.TW': '大銀微系統', '2464.TW': '盟立',
-        '3491.TWO': '昇達科', '8039.TW': '台虹', '8086.TWO': '宏捷科', '2634.TW': '漢翔', '8033.TWO': '雷虎',
+        '3491.TWO': '昇達科', '8039.TW': '台虹', '8086.TWO': '宏捷科', '2634.TW': '漢翔', '8033.TW': '雷虎',
         '2324.TW': '仁寶', '6781.TW': 'AES-KY', '3211.TWO': '順達', '4931.TWO': '新盛力', '8271.TW': '宇瞻',
-        '4967.TW': '十銓', '2313.TW': '華通', '8358.TWO': '金居', '3680.TWO': '家登', '3583.TW': '辛耘'
+        '4967.TW': '十銓', '2313.TW': '華通', '8358.TWO': '金居', '3680.TW': '家登', '3583.TW': '辛耘'
     }
     
     signals = []
@@ -60,7 +61,8 @@ def check_price_action():
                 signals.append(f"🚀 {stock_name}({pure_code})：出現【破底翻/強勢拉回】訊號")
 
         except Exception as e:
-            print(f"Error checking {ticker}: {e}")
+            # 略過單一股票抓取錯誤，不影響其他股票
+            pass
 
     if signals:
         message = f"📊 【Price Action 今日選股推播 (共 {len(stocks_to_track)} 檔)】\n\n" + "\n".join(signals)
