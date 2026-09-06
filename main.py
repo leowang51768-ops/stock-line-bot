@@ -28,7 +28,7 @@ def send_line_message(msg):
     return response.status_code
 
 def check_price_action():
-    # 70家公司完整清單（已將雷虎、宇瞻、十銓修正為 .TW）
+    # 70家公司完整清單（已將家登 3680 修正為 .TWO）
     stocks_to_track = {
         '2330.TW': '台積電', '6669.TW': '緯穎', '2317.TW': '鴻海', '2382.TW': '廣達', '2454.TW': '聯發科',
         '3443.TW': '創意', '2449.TW': '京元電子', '2383.TW': '台光電', '3653.TW': '健策', '3008.TW': '大立光',
@@ -41,9 +41,9 @@ def check_price_action():
         '3163.TWO': '波若威', '4977.TW': '眾達-KY', '2408.TW': '南亞科', '2344.TW': '華邦電', '2337.TW': '旺宏',
         '3374.TWO': '精材', '6139.TW': '亞翔', '6187.TWO': '萬潤', '2049.TW': '上銀', '1590.TW': '亞德客-KY',
         '1504.TW': '東元', '2359.TW': '所羅門', '3022.TW': '威強電', '4576.TW': '大銀微系統', '2464.TW': '盟立',
-        '3491.TWO': '昇達科', '8039.TW': '台虹', '8086.TWO': '宏捷科', '2634.TW': '漢翔', '8033.TW': '雷虎',
+        '3491.TWO': '昇達科', '8039.TW': '台虹', '8086.TWO': '宏捷科', '2634.TW': '漢翔', '8033.TWO': '雷虎',
         '2324.TW': '仁寶', '6781.TW': 'AES-KY', '3211.TWO': '順達', '4931.TWO': '新盛力', '8271.TW': '宇瞻',
-        '4967.TW': '十銓', '2313.TW': '華通', '8358.TWO': '金居', '3680.TW': '家登', '3583.TW': '辛耘'
+        '4967.TW': '十銓', '2313.TW': '華通', '8358.TWO': '金居', '3680.TWO': '家登', '3583.TW': '辛耘'
     }
     
     signals = []
@@ -59,12 +59,10 @@ def check_price_action():
             curr = df.iloc[-1]
             pure_code = ticker.split('.')[0]
 
-            # Price Action 訊號判斷 1: 看漲吞噬 (Bullish Engulfing)
             if (prev['Close'] < prev['Open']) and (curr['Close'] > curr['Open']) and \
                (curr['Close'] >= prev['Open']) and (curr['Open'] <= prev['Close']):
                 signals.append(f"🟢 {stock_name}({pure_code})：出現【看漲吞噬】訊號")
 
-            # Price Action 訊號判斷 2: 破底翻 / 破前低收高 (Pinbar)
             elif (curr['Low'] < prev['Low']) and (curr['Close'] > prev['Close']):
                 signals.append(f"🚀 {stock_name}({pure_code})：出現【破底翻/強勢拉回】訊號")
 
