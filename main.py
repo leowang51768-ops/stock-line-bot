@@ -28,7 +28,27 @@ def send_line_message(msg):
     print(f"LINE API Response Body: {response.text}")
     return response.status_code
 
+def check_market_trend():
+    """檢查大盤 (^TWII) 當天表現與漲跌幅"""
+    try:
+        market = yf.Ticker('^TWII')
+        df_market = market.history(period='2d')
+        if len(df_market) < 2:
+            return 0.0, "中性"
+        
+        prev_close = df_market['Close'].iloc[-2]
+        curr_close = df_market['Close'].iloc[-1]
+        market_chg = (curr_close - prev_close) / prev_close * 100
+        
+        return round(market_chg, 2), "正常"
+    except Exception as e:
+        print(f"⚠️ 取得大盤資訊失敗: {e}")
+        return 0.0, "異常"
+
 def check_price_action():
+    market_chg, market_status = check_market_trend()
+    print(f"📈 今日大盤漲跌幅: {market_chg}%")
+
     stocks_to_track = {
         '2330.TW': '台積電', '6669.TW': '緯穎', '2317.TW': '鴻海', '2382.TW': '廣達', '2454.TW': '聯發科',
         '3443.TW': '創意', '2449.TW': '京元電子', '2383.TW': '台光電', '3653.TW': '健策', '3008.TW': '大立光',
@@ -60,34 +80,51 @@ def check_price_action():
     for ticker, stock_name in stocks_to_track.items():
         try:
             df = data[ticker].dropna()
-            if len(df) < 6: # 需要至少 6 天來計算 5 日均量
+            if len(df) < 6:
                 continue
 
             prev = df.iloc[-2]
             curr = df.iloc[-1]
             pure_code = ticker.split('.')[0]
             
-            # 計算前 5 日平均成交量（不含今天）
+            # 計算收盤價與當日漲跌幅 (%)
+            prev_close = prev['Close']
+            curr_close = curr['Close']
+            pct_change = (curr_close - prev_close) / prev_close * 100
+            
+            # 計算量能倍數
             avg_volume_5d = df['Volume'].iloc[-6:-1].mean()
-            # 判斷今天是否帶量（成交量大於 5 日均量）
+            vol_ratio = curr['Volume'] / avg_volume_5d if avg_volume_5d > 0 else 1.0
             is_volume_up = curr['Volume'] > avg_volume_5d
 
-            # 1. 看漲吞噬（加上成交量過濾：需帶量或至少成交量放大）
+            # 組合資訊字串（包含價格、漲跌幅、量能倍數，替代無法直接從 yfinance 取得的法人籌碼）
+            info_str = f"• {stock_name} ({pure_code}) | {curr_close:.1f}元 ({pct_change:+.2f}%) | 量增 {vol_ratio:.1f}倍"
+
+            # 1. 看漲吞噬
             if (prev['Close'] < prev['Open']) and (curr['Close'] > curr['Open']) and \
                (curr['Close'] >= prev['Open']) and (curr['Open'] <= prev['Close']) and is_volume_up:
-                engulfing_signals.append(f"• {stock_name} ({pure_code})")
+                engulfing_signals.append(info_str)
 
-            # 2. 破底翻 / 強勢拉回（加上成交量過濾：需帶量收紅）
+            # 2. 破底翻 / 強勢拉回
             elif (curr['Low'] < prev['Low']) and (curr['Close'] > curr['Open']) and \
                  (curr['Close'] > prev['Close']) and is_volume_up:
-                spring_signals.append(f"• {stock_name} ({pure_code})")
+                spring_signals.append(info_str)
 
         except Exception as e:
             print(f"⚠️ 處理 {ticker} ({stock_name}) 時發生錯誤: {e}")
             pass
 
     today_str = datetime.now().strftime('%Y-%m-%d')
-    message = f"📊 【Price Action 盤後篩選】\n📅 日期：{today_str}\n追蹤標的：{len(stocks_to_track)} 檔\n━━━━━━━━━━━━━━━\n"
+    
+    market_warning = ""
+    if market_chg <= -1.5:
+        market_warning = "⚠️ 【系統警示】：大盤重挫逾 1.5%，盤勢極度弱勢，個股訊號易受拖累，建議嚴守停損或觀望！\n━━━━━━━━━━━━━━━\n"
+    elif market_chg < 0:
+        market_warning = "⚠️ 【盤勢提醒】：大盤震盪收黑，操作請留意逆勢風險。\n━━━━━━━━━━━━━━━\n"
+    else:
+        market_warning = "✅ 【盤勢狀態】：大盤相對穩健。\n━━━━━━━━━━━━━━━\n"
+
+    message = f"📊 【Price Action 盤後篩選】\n📅 日期：{today_str}\n📈 大盤表現：{market_chg:+.2f}%\n" + market_warning
 
     if engulfing_signals:
         message += f"\n🟢 【看漲吞噬 (帶量)】 (共 {len(engulfing_signals)} 檔)\n" + "\n".join(engulfing_signals) + "\n"
