@@ -22,7 +22,6 @@ def send_line_messages(msg_list):
         'Authorization': f'Bearer {LINE_ACCESS_TOKEN}'
     }
     
-    # 確保訊息清單不超過 5 則
     final_messages = msg_list[:5]
     messages_payload = [{'type': 'text', 'text': m[:4500]} for m in final_messages]
     
@@ -145,7 +144,6 @@ def generate_stock_report():
                     continue
                 df = data[ticker].dropna()
 
-            # yfinance 處理欄位展平
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
@@ -174,61 +172,62 @@ def generate_stock_report():
             vol_ratio = curr_vol / ma5_vol if ma5_vol > 0 else 1.0
 
             # =========================================================
-            # 【第一階段：1~5 天硬條件】（鋼鐵防衛門檻，徹底杜絕無量漲停與誤報）
+            # 【第一階段：1~5 天硬條件】（嚴格量價扣板機）
             # =========================================================
             
-            # 1. 嚴格量能門檻：當日成交量必須 >= 1000 張，且顯著大於 5日均量 1.2 倍
-            cond_vol = (curr_vol >= 1000) and (curr_vol > ma5_vol * 1.2)
+            # 1. 嚴格量能：成交量 >= 1000 張，且大於 5MA 均量 1.3 倍
+            cond_vol = (curr_vol >= 1000) and (curr_vol > ma5_vol * 1.3)
             
-            # 2. 嚴格均線門檻：收盤價站上 5MA
+            # 2. 均線與實體：站上 5MA，實體漲幅 >= 1.0%
             cond_ma5 = curr_close > float(latest['MA5'])
-
-            # 3. K 線實體檢查 (排除一字跳空無量漲停)：實體幅度必須 >= 0.5%
             body_pct = (curr_close - float(latest['Open'])) / float(latest['Open']) * 100
-            is_real_body = body_pct >= 0.5
+            is_real_body = body_pct >= 1.0
 
-            # 4. 看漲吞噬：今日紅棒 + 昨黑棒 + 實體完全包覆 + 漲幅 >= 1.5%
+            # 3. 看漲吞噬：今日長紅包覆昨黑棒，且當日漲幅 >= 2.0%
             is_bullish_engulfing = is_real_body and \
                                    (float(prev_1['Close']) < float(prev_1['Open'])) and \
                                    (curr_close >= float(prev_1['Open'])) and \
                                    (float(latest['Open']) <= float(prev_1['Close'])) and \
-                                   (pct_change >= 1.5)
+                                   (pct_change >= 2.0)
 
-            # 5. 破底翻：近5天曾探低點，且今日帶量大漲突破前高 (漲幅 >= 2.0%)
-            recent_min_low = float(d1_5['Low'].min())
+            # 4. 真·破底翻：前2-5天創下近 20 天新低，今日帶量大漲突破前高（漲幅 >= 2.5%）
+            low_20d = float(df_40['Low'].iloc[-20:].min())
+            min_low_in_5d = float(d1_5['Low'].min())
+            
+            # 條件：近5天曾探 20天新低，且今日強勢收過昨高與前高
             is_spring = is_real_body and \
                         (curr_close > float(prev_1['High'])) and \
-                        (pct_change >= 2.0) and \
-                        (float(d1_5['Low'].iloc[:-1].min()) == recent_min_low)
+                        (pct_change >= 2.5) and \
+                        (min_low_in_5d == low_20d)
 
             has_trigger = is_bullish_engulfing or is_spring
 
-            # 硬門檻過濾：只要不符合 (站上5MA + 爆量>1000張 + 真實K棒實體 + 觸發型態) 直接剔除
+            # 硬門檻過濾
             if not (cond_ma5 and cond_vol and has_trigger):
                 continue
 
             # =========================================================
-            # 【第二階段：6~40 天軟條件】（型態背景標註）
+            # 【第二階段：6~40 天軟條件】（真正的 VCP 與結構標註）
             # =========================================================
             tags = []
 
-            # 1. VCP 波動收縮結構 (6~40天後半段振幅 < 前半段振幅)
-            part1 = df_40.iloc[-40:-20]  # 第 21~40 天
-            part2 = df_40.iloc[-20:-5]   # 第 6~20 天
+            # 1. 真正的 VCP 波動收縮結構：前半段振幅與後半段振幅比對（後半段收縮至 70% 以下）
+            part1 = df_40.iloc[-40:-15]  # 前 25 天
+            part2 = df_40.iloc[-15:-1]   # 近 14 天
 
             vol_p1 = (float(part1['High'].max()) - float(part1['Low'].min())) / float(part1['Low'].min())
             vol_p2 = (float(part2['High'].max()) - float(part2['Low'].min())) / float(part2['Low'].min())
 
-            if vol_p2 < vol_p1:
+            if (vol_p2 < vol_p1 * 0.7) and (vol_p1 < 0.35):
                 tags.append("🔥 VCP波動收縮")
 
-            # 2. 箱型沉澱結構 (6~40天高低震幅 < 15%)
+            # 2. 箱型沉澱突破 (6~40天高低震幅 < 15%)
             range_6_40 = (float(d6_40['High'].max()) - float(d6_40['Low'].min())) / float(d6_40['Low'].min())
             if range_6_40 < 0.15:
                 tags.append("📦 箱型沉澱突破")
 
             if not tags:
-                tags.append("⚡ 純短線爆量噴發")
+                tags.append("⚡ 短線強勢爆量")
 
             # 組合短線觸發名稱
             triggers = []
@@ -273,7 +272,7 @@ def generate_stock_report():
     if signals_list:
         signals_body = "\n\n".join(signals_list)
     else:
-        signals_body = "☕ 今日無符合【1-5天觸發+站上5MA】之標的，保持耐心觀望。"
+        signals_body = "☕ 今日無符合【1-5天嚴格觸發+站上5MA】之標的，保持耐心觀望。"
 
     msg_part2 = (
         f"📋 【精選觸發個股明細】(共 {len(signals_list)} 檔)\n"
