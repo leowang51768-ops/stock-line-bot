@@ -8,11 +8,6 @@ from datetime import datetime
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 LINE_USER_ID = os.getenv('LINE_USER_ID')
 
-if not LINE_ACCESS_TOKEN:
-    print("⚠️ 警告：未讀取到 LINE_ACCESS_TOKEN，請檢查 GitHub Actions 的 env 設定！")
-else:
-    print(f"✅ 成功讀取 Token (字串長度: {len(LINE_ACCESS_TOKEN)})")
-
 def send_line_messages(msg_list):
     """一次發送多則訊息（LINE Bot API 支援單次最多 5 則）"""
     if not LINE_ACCESS_TOKEN or not LINE_USER_ID:
@@ -31,7 +26,6 @@ def send_line_messages(msg_list):
     }
     response = requests.post(url, json=payload, headers=headers)
     print(f"LINE API Response Status: {response.status_code}")
-    print(f"LINE API Response Body: {response.text}")
     return response.status_code
 
 def check_market_trend():
@@ -51,7 +45,7 @@ def check_market_trend():
         print(f"⚠️ 取得大盤資訊失敗: {e}")
         return 0.0, "異常"
 
-# 175 檔台股 AI 產業鏈完整監控清單 (代碼 -> 中文名稱對照)
+# 175 檔台股 AI 產業鏈完整監控清單
 STOCKS_TO_TRACK = {
     # 1. 矽晶圓與晶圓代工
     "2330.TW": "台積電", "6488.TWO": "環球晶", "3532.TW": "台勝科", "6182.TWO": "合晶", 
@@ -127,18 +121,21 @@ def generate_stock_report():
 
     engulfing_signals = []
     spring_signals = []
+    vcp_signals = []
+    n_shape_signals = []
+    
     tickers = list(STOCKS_TO_TRACK.keys())
     
-    print("⏳ 正在批次下載股價與成交量資料...")
+    print("⏳ 正在批次下載 60 日技術面資料...")
     try:
-        data = yf.download(tickers, period='6d', group_by='ticker', threads=True, progress=False)
+        # 抓取 60 天資料以計算 VCP 與 N 字底
+        data = yf.download(tickers, period='60d', group_by='ticker', threads=True, progress=False)
     except Exception as e:
         print(f"❌ 批次下載失敗: {e}")
         return ["📊 【Price Action 選股推播】\n\n系統下載資料發生異常。"]
 
     for ticker, stock_name in STOCKS_TO_TRACK.items():
         try:
-            # 處理多層 Dataframe 或單一股票 Dataframe 結構
             if len(tickers) == 1:
                 df = data.dropna()
             else:
@@ -146,7 +143,7 @@ def generate_stock_report():
                     continue
                 df = data[ticker].dropna()
 
-            if len(df) < 6:
+            if len(df) < 30:
                 continue
 
             prev = df.iloc[-2]
@@ -157,20 +154,56 @@ def generate_stock_report():
             pct_change = (curr_close - prev['Close']) / prev['Close'] * 100
             
             avg_volume_5d = df['Volume'].iloc[-6:-1].mean()
+            avg_volume_20d = df['Volume'].iloc[-21:-1].mean()
             vol_ratio = curr['Volume'] / avg_volume_5d if avg_volume_5d > 0 else 1.0
             is_volume_up = curr['Volume'] > avg_volume_5d
 
-            # 1. 看漲吞噬 (昨日黑K，今日紅K且實體完整吞噬昨日實體)
+            # -------------------------------------------------------------
+            # 1. 看漲吞噬 (Bullish Engulfing)
+            # -------------------------------------------------------------
             if (prev['Close'] < prev['Open']) and (curr['Close'] > curr['Open']) and \
                (curr['Close'] >= prev['Open']) and (curr['Open'] <= prev['Close']) and is_volume_up:
-                line_str = f"▪ {stock_name} ({pure_code})\n  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n  💡 特性：帶量吞噬 (參考勝率 ~58%)"
+                line_str = f"▪ {stock_name} ({pure_code})\n  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n  💡 特性：帶量吞噬 (短線轉強)"
                 engulfing_signals.append(line_str)
 
-            # 2. 破底翻 / 強勢拉回 (今日創低點但收盤強勢拉高過昨收)
+            # -------------------------------------------------------------
+            # 2. 破底翻 / 強勢拉回 (Spring)
+            # -------------------------------------------------------------
             elif (curr['Low'] < prev['Low']) and (curr['Close'] > curr['Open']) and \
                  (curr['Close'] > prev['Close']) and is_volume_up:
-                line_str = f"▪ {stock_name} ({pure_code})\n  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n  💡 特性：破底翻揚 (參考勝率 ~56%)"
+                line_str = f"▪ {stock_name} ({pure_code})\n  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n  💡 特性：破底翻揚 (假跌破洗盤)"
                 spring_signals.append(line_str)
+
+            # -------------------------------------------------------------
+            # 3. VCP 波動收縮型態 (Volatility Contraction Pattern)
+            # 邏輯：近 20 天最高與最低之振幅 < 近 40 天振幅（波動收縮），且今日成交量收縮至極致或帶量突破
+            # -------------------------------------------------------------
+            high_20 = df['High'].iloc[-20:].max()
+            low_20 = df['Low'].iloc[-20:].min()
+            volatility_20 = (high_20 - low_20) / low_20
+
+            high_40 = df['High'].iloc[-40:].max()
+            low_40 = df['Low'].iloc[-40:].min()
+            volatility_40 = (high_40 - low_40) / low_40
+
+            # 波動縮小 + 股價位於前高 5% 臨門一腳附近 + 量縮沉澱或今日出量突破
+            if (volatility_20 < volatility_40 * 0.6) and (curr_close >= high_20 * 0.95) and \
+               (curr['Volume'] < avg_volume_20d * 0.7 or is_volume_up):
+                line_str = f"▪ {stock_name} ({pure_code})\n  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}%\n  💡 特性：VCP 波動收縮 (籌碼沉澱完畢)"
+                vcp_signals.append(line_str)
+
+            # -------------------------------------------------------------
+            # 4. N 字底型態 (N-Shape / Higher Low + 過前高)
+            # 邏輯：第一波創高，第二波拉回低點未破前低（Higher Low），今日帶量突破第一波高點
+            # -------------------------------------------------------------
+            peak1_high = df['High'].iloc[-20:-5].max()     # 左頭（第一波高點）
+            pullback_low = df['Low'].iloc[-15:-2].min()   # 壓回低點
+            base_low = df['Low'].iloc[-30:-15].min()      # 基準起漲低點
+
+            # 條件：壓回低點守住起漲點 (Higher Low) + 今日收盤衝破左頭高點 (Over High) + 今日帶量
+            if (pullback_low > base_low) and (curr_close >= peak1_high) and (prev['Close'] < peak1_high) and is_volume_up:
+                line_str = f"▪ {stock_name} ({pure_code})\n  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n  💡 特性：N字底突破 (Higher Low 過前高)"
+                n_shape_signals.append(line_str)
 
         except Exception as e:
             print(f"⚠️ 處理 {ticker} ({stock_name}) 時發生錯誤: {e}")
@@ -204,8 +237,14 @@ def generate_stock_report():
     if spring_signals:
         msg_part2_body.append(f"🚀 【破底翻/強勢拉回】(共 {len(spring_signals)} 檔)\n\n" + "\n\n".join(spring_signals))
 
-    if not engulfing_signals and not spring_signals:
-        msg_part2_body.append("☕ 今日無符合嚴格量價條件之標的，保持耐心觀望。")
+    if vcp_signals:
+        msg_part2_body.append(f"🎯 【VCP 波動收縮】(共 {len(vcp_signals)} 檔)\n\n" + "\n\n".join(vcp_signals))
+
+    if n_shape_signals:
+        msg_part2_body.append(f"⚡ 【N字底過前高】(共 {len(n_shape_signals)} 檔)\n\n" + "\n\n".join(n_shape_signals))
+
+    if not any([engulfing_signals, spring_signals, vcp_signals, n_shape_signals]):
+        msg_part2_body.append("☕ 今日無符合嚴格量價型態之標的，保持耐心觀望。")
 
     msg_part2 = (
         f"📋 【篩選結果明細】\n"
