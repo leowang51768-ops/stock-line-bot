@@ -167,34 +167,43 @@ def generate_stock_report():
             d6_40 = df_40.iloc[-40:-5]
 
             curr_close = float(latest['Close'])
+            curr_vol = float(latest['Volume'])
+            ma5_vol = float(latest['Vol_MA5'])
+            
             pct_change = (curr_close - float(prev_1['Close'])) / float(prev_1['Close']) * 100
-            vol_ratio = float(latest['Volume']) / float(latest['Vol_MA5']) if float(latest['Vol_MA5']) > 0 else 1.0
+            vol_ratio = curr_vol / ma5_vol if ma5_vol > 0 else 1.0
 
             # =========================================================
-            # 【第一階段：1~5 天硬條件】（加入實體漲幅與顯著量增門檻）
+            # 【第一階段：1~5 天硬條件】（鋼鐵防衛門檻，徹底杜絕無量漲停與誤報）
             # =========================================================
             
-            # 1. 站上 5MA 且成交量顯著放大（大於 5日均量 1.15 倍）
+            # 1. 嚴格量能門檻：當日成交量必須 >= 1000 張，且顯著大於 5日均量 1.2 倍
+            cond_vol = (curr_vol >= 1000) and (curr_vol > ma5_vol * 1.2)
+            
+            # 2. 嚴格均線門檻：收盤價站上 5MA
             cond_ma5 = curr_close > float(latest['MA5'])
-            cond_vol = float(latest['Volume']) > (float(latest['Vol_MA5']) * 1.15)
 
-            # 2. 看漲吞噬：今日紅棒 + 昨黑棒 + 實體包覆 + 今日漲幅 >= 1.0%
-            is_bullish_engulfing = (curr_close > float(latest['Open'])) and \
+            # 3. K 線實體檢查 (排除一字跳空無量漲停)：實體幅度必須 >= 0.5%
+            body_pct = (curr_close - float(latest['Open'])) / float(latest['Open']) * 100
+            is_real_body = body_pct >= 0.5
+
+            # 4. 看漲吞噬：今日紅棒 + 昨黑棒 + 實體完全包覆 + 漲幅 >= 1.5%
+            is_bullish_engulfing = is_real_body and \
                                    (float(prev_1['Close']) < float(prev_1['Open'])) and \
                                    (curr_close >= float(prev_1['Open'])) and \
                                    (float(latest['Open']) <= float(prev_1['Close'])) and \
-                                   (pct_change >= 1.0)
+                                   (pct_change >= 1.5)
 
-            # 3. 破底翻：近5天曾探低點，但今日強勢突破前高且收紅（漲幅 >= 1.5%）
+            # 5. 破底翻：近5天曾探低點，且今日帶量大漲突破前高 (漲幅 >= 2.0%)
             recent_min_low = float(d1_5['Low'].min())
-            is_spring = (curr_close > float(latest['Open'])) and \
+            is_spring = is_real_body and \
                         (curr_close > float(prev_1['High'])) and \
-                        (pct_change >= 1.5) and \
+                        (pct_change >= 2.0) and \
                         (float(d1_5['Low'].iloc[:-1].min()) == recent_min_low)
 
             has_trigger = is_bullish_engulfing or is_spring
 
-            # 硬門檻過濾
+            # 硬門檻過濾：只要不符合 (站上5MA + 爆量>1000張 + 真實K棒實體 + 觸發型態) 直接剔除
             if not (cond_ma5 and cond_vol and has_trigger):
                 continue
 
