@@ -171,23 +171,26 @@ def generate_stock_report():
             vol_ratio = float(latest['Volume']) / float(latest['Vol_MA5']) if float(latest['Vol_MA5']) > 0 else 1.0
 
             # =========================================================
-            # 【第一階段：1~5 天硬條件】（沒有觸發直接剔除）
+            # 【第一階段：1~5 天硬條件】（加入實體漲幅與顯著量增門檻）
             # =========================================================
             
-            # 1. 站上 5MA 且成交量大於 5日均量
+            # 1. 站上 5MA 且成交量顯著放大（大於 5日均量 1.15 倍）
             cond_ma5 = curr_close > float(latest['MA5'])
-            cond_vol = float(latest['Volume']) > float(latest['Vol_MA5'])
+            cond_vol = float(latest['Volume']) > (float(latest['Vol_MA5']) * 1.15)
 
-            # 2. 看漲吞噬
+            # 2. 看漲吞噬：今日紅棒 + 昨黑棒 + 實體包覆 + 今日漲幅 >= 1.0%
             is_bullish_engulfing = (curr_close > float(latest['Open'])) and \
                                    (float(prev_1['Close']) < float(prev_1['Open'])) and \
                                    (curr_close >= float(prev_1['Open'])) and \
-                                   (float(latest['Open']) <= float(prev_1['Close']))
+                                   (float(latest['Open']) <= float(prev_1['Close'])) and \
+                                   (pct_change >= 1.0)
 
-            # 3. 破底翻 (近5天創低後強勢突破前高)
+            # 3. 破底翻：近5天曾探低點，但今日強勢突破前高且收紅（漲幅 >= 1.5%）
             recent_min_low = float(d1_5['Low'].min())
-            is_spring = (curr_close > float(prev_1['High'])) and \
-                        (float(prev_1['Low']) == recent_min_low)
+            is_spring = (curr_close > float(latest['Open'])) and \
+                        (curr_close > float(prev_1['High'])) and \
+                        (pct_change >= 1.5) and \
+                        (float(d1_5['Low'].iloc[:-1].min()) == recent_min_low)
 
             has_trigger = is_bullish_engulfing or is_spring
 
