@@ -245,20 +245,22 @@ def generate_stock_report():
             trigger_text = "/".join(triggers)
 
             # =========================================================
-            # 【計算 20日支撐、20日壓力 與 多空交會價（關鍵頸線）】
+            # 【計算 20日支撐、20日壓力 與 多次受阻的關鍵頸線】
             # =========================================================
             support_20d = float(df_40['Low'].iloc[-20:].min())
             resistance_20d = float(df_40['High'].iloc[-20:].max())
             
-            # 定義「多空交會價 / 關鍵頸線」：取過去 60 日內成交密集區或顯著高點（此處以 60 日最高壓力價作為多空分水嶺）
-            days_for_pivot = min(len(df), 60)
-            pivot_line = float(df['High'].iloc[-days_for_pivot:].max())
+            # 定義「多次受阻的關鍵頸線 / 多空交會價」：
+            # 排除掉絕對最高點的極端值，取過去 60 日內次高、或出現最多次密集高點的區間上緣作為頸線
+            recent_highs = df['High'].iloc[-60:]
+            # 透過抓取 85 分位數的價格，避開偶發的單日極端高點，精準對應這種「多次卡住上不去、最後帶量突破」的頸線位置
+            neck_line = float(np.percentile(recent_highs, 85))
 
             stock_info = (
                 f"▪ {stock_name} ({pure_code})\n"
                 f"  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n"
                 f"  🎯 今日突破價：{breakthrough_price:.1f}\n"
-                f"  ⚔️ 多空交會價：{pivot_line:.1f}\n"
+                f"  ⚔️ 關鍵頸線(多次受阻價)：{neck_line:.1f}\n"
                 f"  🛡️ 20日支撐：{support_20d:.1f} | ⚡ 20日壓力：{resistance_20d:.1f}\n"
                 f"  💡 訊號：{trigger_text} ({tag_text})"
             )
