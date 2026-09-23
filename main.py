@@ -235,28 +235,32 @@ def generate_stock_report():
             
             if is_bullish_engulfing: 
                 triggers.append("看漲吞噬")
-                # 看漲吞噬通常突破昨日最高價（或昨收開盤），此處取昨日高點作為突破參考價
                 breakthrough_price = float(prev_1['High'])
                 
             if is_spring: 
                 triggers.append("破底翻")
-                # 破底翻突破昨高或近期頸線
                 breakthrough_price = float(prev_1['High'])
 
             tag_text = " | ".join(tags)
             trigger_text = "/".join(triggers)
 
             # =========================================================
-            # 【計算 20 日支撐與壓力】
+            # 【計算 20日支撐、60日支撐 與 20日壓力】
             # =========================================================
             support_20d = float(df_40['Low'].iloc[-20:].min())
+            
+            # 確保有足夠的資料計算 60 日最低價（若 df 筆數小於 60，則取現有全部資料的最低價）
+            days_for_support = min(len(df), 60)
+            support_60d = float(df['Low'].iloc[-days_for_support:].min())
+            
             resistance_20d = float(df_40['High'].iloc[-20:].max())
 
             stock_info = (
                 f"▪ {stock_name} ({pure_code})\n"
                 f"  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n"
                 f"  🎯 今日突破價：{breakthrough_price:.1f}\n"
-                f"  🛡️ 20日支撐：{support_20d:.1f} | ⚡ 20日壓力：{resistance_20d:.1f}\n"
+                f"  🛡️ 20日支撐：{support_20d:.1f} | 60日支撐：{support_60d:.1f}\n"
+                f"  ⚡ 20日壓力：{resistance_20d:.1f}\n"
                 f"  💡 訊號：{trigger_text} ({tag_text})"
             )
             signals_list.append(stock_info)
