@@ -237,9 +237,16 @@ def generate_stock_report():
             tag_text = " | ".join(tags)
             trigger_text = "/".join(triggers)
 
+            # =========================================================
+            # 【新增：計算 20 日支撐與壓力】
+            # =========================================================
+            support_20d = float(df_40['Low'].iloc[-20:].min())
+            resistance_20d = float(df_40['High'].iloc[-20:].max())
+
             stock_info = (
                 f"▪ {stock_name} ({pure_code})\n"
                 f"  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n"
+                f"  🛡️ 20日支撐：{support_20d:.1f} | ⚡ 20日壓力：{resistance_20d:.1f}\n"
                 f"  💡 訊號：{trigger_text} ({tag_text})"
             )
             signals_list.append(stock_info)
