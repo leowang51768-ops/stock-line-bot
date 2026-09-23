@@ -245,22 +245,21 @@ def generate_stock_report():
             trigger_text = "/".join(triggers)
 
             # =========================================================
-            # 【計算 20日支撐、60日支撐 與 20日壓力】
+            # 【計算 20日支撐、20日壓力 與 多空交會價（關鍵頸線）】
             # =========================================================
             support_20d = float(df_40['Low'].iloc[-20:].min())
-            
-            # 確保有足夠的資料計算 60 日最低價（若 df 筆數小於 60，則取現有全部資料的最低價）
-            days_for_support = min(len(df), 60)
-            support_60d = float(df['Low'].iloc[-days_for_support:].min())
-            
             resistance_20d = float(df_40['High'].iloc[-20:].max())
+            
+            # 定義「多空交會價 / 關鍵頸線」：取過去 60 日內成交密集區或顯著高點（此處以 60 日最高壓力價作為多空分水嶺）
+            days_for_pivot = min(len(df), 60)
+            pivot_line = float(df['High'].iloc[-days_for_pivot:].max())
 
             stock_info = (
                 f"▪ {stock_name} ({pure_code})\n"
                 f"  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n"
                 f"  🎯 今日突破價：{breakthrough_price:.1f}\n"
-                f"  🛡️ 20日支撐：{support_20d:.1f} | 60日支撐：{support_60d:.1f}\n"
-                f"  ⚡ 20日壓力：{resistance_20d:.1f}\n"
+                f"  ⚔️ 多空交會價：{pivot_line:.1f}\n"
+                f"  🛡️ 20日支撐：{support_20d:.1f} | ⚡ 20日壓力：{resistance_20d:.1f}\n"
                 f"  💡 訊號：{trigger_text} ({tag_text})"
             )
             signals_list.append(stock_info)
