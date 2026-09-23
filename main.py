@@ -229,16 +229,25 @@ def generate_stock_report():
             if not tags:
                 tags.append("⚡ 短線強勢爆量")
 
-            # 組合短線觸發名稱
+            # 組合短線觸發名稱與決定「今日突破價」
             triggers = []
-            if is_bullish_engulfing: triggers.append("看漲吞噬")
-            if is_spring: triggers.append("破底翻")
+            breakthrough_price = float(prev_1['High'])  # 預設突破昨高
+            
+            if is_bullish_engulfing: 
+                triggers.append("看漲吞噬")
+                # 看漲吞噬通常突破昨日最高價（或昨收開盤），此處取昨日高點作為突破參考價
+                breakthrough_price = float(prev_1['High'])
+                
+            if is_spring: 
+                triggers.append("破底翻")
+                # 破底翻突破昨高或近期頸線
+                breakthrough_price = float(prev_1['High'])
 
             tag_text = " | ".join(tags)
             trigger_text = "/".join(triggers)
 
             # =========================================================
-            # 【新增：計算 20 日支撐與壓力】
+            # 【計算 20 日支撐與壓力】
             # =========================================================
             support_20d = float(df_40['Low'].iloc[-20:].min())
             resistance_20d = float(df_40['High'].iloc[-20:].max())
@@ -246,6 +255,7 @@ def generate_stock_report():
             stock_info = (
                 f"▪ {stock_name} ({pure_code})\n"
                 f"  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n"
+                f"  🎯 今日突破價：{breakthrough_price:.1f}\n"
                 f"  🛡️ 20日支撐：{support_20d:.1f} | ⚡ 20日壓力：{resistance_20d:.1f}\n"
                 f"  💡 訊號：{trigger_text} ({tag_text})"
             )
