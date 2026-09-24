@@ -8,7 +8,7 @@ from datetime import datetime, date
 
 # =========================================================
 # ⚙️ 【測試開關與設定】
-# 手動測試指定日期時改為 True；部署回日常自動排程時改為 False
+# 手動測試歷史日期時改為 True；排程自動推播時改為 False
 # =========================================================
 TEST_MODE = False          # True: 開啟歷史測試 / False: 恢復每日自動推播
 TEST_DATE = "2026-09-24"   # 想測試的日期 (YYYY-MM-DD)
@@ -262,7 +262,7 @@ def generate_stock_report():
                                    (pct_change >= 2.0)
 
             # 4. 優化版·真破底翻（Spring）：
-            # 正確從完整歷史 df 取出破底前（前5天之前）的平台低點，作為強勢收復指標
+            # 從未切割的完整 df 抓取破底發生前的平台低點 (避免索引越界)
             low_20d = float(df_40['Low'].iloc[-20:].min())
             min_low_in_5d = float(d1_5['Low'].min())
             
