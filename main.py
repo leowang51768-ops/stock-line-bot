@@ -78,14 +78,20 @@ def send_line_messages(msg_list):
     return response.status_code
 
 def check_market_trend():
-    """檢查大盤 (^TWII) 9/24 表現與漲跌幅"""
+    """檢查大盤 (^TWII) 當天表現與漲跌幅"""
     try:
         market = yf.Ticker('^TWII')
-        df_market = market.history(period='10d')
+        df_market = market.history(period='30d')
         
-        # 抓取倒數第 2 筆（9/24當天）與倒數第 3 筆（9/23前一天）
-        prev_close = df_market['Close'].iloc[-3]
-        curr_close = df_market['Close'].iloc[-2]
+        # 轉為標準日期格式並限定在 2026-09-24 以前
+        df_market.index = pd.to_datetime(df_market.index).tz_localize(None).normalize()
+        df_market = df_market[df_market.index <= '2026-09-24']
+
+        if len(df_market) < 2:
+            return 0.0, "中性"
+        
+        prev_close = df_market['Close'].iloc[-2]
+        curr_close = df_market['Close'].iloc[-1]
         market_chg = (curr_close - prev_close) / prev_close * 100
         
         return round(market_chg, 2), "正常"
@@ -170,9 +176,9 @@ def generate_stock_report():
     signals_list = []
     tickers = list(STOCKS_TO_TRACK.keys())
     
-    print("⏳ 正在批次下載 60 日技術面資料...")
+    print("⏳ 正在批次下載 80 日技術面資料...")
     try:
-        data = yf.download(tickers, period='60d', group_by='ticker', threads=True, progress=False)
+        data = yf.download(tickers, period='80d', group_by='ticker', threads=True, progress=False)
     except Exception as e:
         print(f"❌ 批次下載失敗: {e}")
         return ["📊 【Price Action 選股推播】\n\n系統下載資料發生異常。"]
@@ -189,16 +195,17 @@ def generate_stock_report():
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
-            if len(df) < 41:
+            # -------------------------------------------------------------
+            # 【手動測試核心修正】：標準化日期索引並鎖定 <= 2026-09-24
+            df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
+            df = df[df.index <= '2026-09-24']
+            # -------------------------------------------------------------
+
+            if len(df) < 40:
                 continue
 
             df = df.sort_index(ascending=True)
-            
-            # -------------------------------------------------------------
-            # 【關鍵修改】：取倒數第 41 筆至倒數第 2 筆（精準回到 2026-09-24 當天）
-            df_40 = df.iloc[-41:-1].copy()
-            # -------------------------------------------------------------
-            
+            df_40 = df.iloc[-40:].copy()
             pure_code = ticker.split('.')[0]
 
             # 計算 5 日均線與 5 日均量
@@ -297,7 +304,7 @@ def generate_stock_report():
             neckline_price, stop_loss_price = calculate_precise_stop_loss(df_40, window=15)
             
             # 抓取過去 60 日的高點分佈，抓出 1~3 條關鍵頸線
-            recent_highs = df['High'].iloc[-61:-1]
+            recent_highs = df['High'].iloc[-60:]
             p75 = float(np.percentile(recent_highs, 75))
             p85 = float(np.percentile(recent_highs, 85))
             p95 = float(np.percentile(recent_highs, 95))
