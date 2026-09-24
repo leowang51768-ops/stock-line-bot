@@ -4,7 +4,7 @@ import datetime
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime
+from datetime import datetime, date
 
 # 從 GitHub Secrets 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -83,9 +83,9 @@ def check_market_trend():
         market = yf.Ticker('^TWII')
         df_market = market.history(period='100d')
         
-        # 時區處理並截斷至 2026-09-24
-        df_market.index = df_market.index.tz_localize(None)
-        df_market = df_market[df_market.index.strftime('%Y-%m-%d') <= '2026-09-24']
+        # 轉為純 date 比對，精準留下 <= 2026-09-24 包含當天
+        target_test_date = date(2026, 9, 24)
+        df_market = df_market[df_market.index.map(lambda x: x.date()) <= target_test_date]
 
         if len(df_market) < 2:
             return 0.0, "中性"
@@ -183,6 +183,8 @@ def generate_stock_report():
         print(f"❌ 批次下載失敗: {e}")
         return ["📊 【Price Action 選股推播】\n\n系統下載資料發生異常。"]
 
+    target_test_date = date(2026, 9, 24)
+
     for ticker, stock_name in STOCKS_TO_TRACK.items():
         try:
             if len(tickers) == 1:
@@ -196,9 +198,8 @@ def generate_stock_report():
                 df.columns = df.columns.get_level_values(0)
 
             # -------------------------------------------------------------
-            # 【精準截斷至 2026-09-24 止】
-            df.index = df.index.tz_localize(None)
-            df = df[df.index.strftime('%Y-%m-%d') <= '2026-09-24']
+            # 【手動測試修正】：用純 Date 物件過濾，鎖定 2026-09-24 當天收盤資料
+            df = df[df.index.map(lambda x: x.date()) <= target_test_date]
             # -------------------------------------------------------------
 
             if len(df) < 40:
