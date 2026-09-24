@@ -4,7 +4,15 @@ import datetime
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime
+from datetime import datetime, date
+
+# =========================================================
+# ⚙️ 【手動測試開關與設定】
+# 測試時改為 True 並指定日期；測試完改回 False 即可恢復日常排程
+# =========================================================
+TEST_MODE = True           # True: 開啟歷史測試 / False: 恢復每日自動排程
+TEST_DATE = "2026-09-24"   # 想測試的日期 (YYYY-MM-DD)
+# =========================================================
 
 # 從 GitHub Secrets 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -77,11 +85,26 @@ def send_line_messages(msg_list):
     print(f"LINE API Response Status: {response.status_code}")
     return response.status_code
 
+def filter_by_test_date(df_input, target_date_str):
+    """處理 yfinance 時區並截斷資料至指定測試日期"""
+    df = df_input.copy()
+    if df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
+    
+    # 將日期統一轉為 YYYY-MM-DD 比對，確保當天交易日不被切掉
+    target_dt = pd.to_datetime(target_date_str)
+    df = df[df.index <= target_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)]
+    return df
+
 def check_market_trend():
     """檢查大盤 (^TWII) 當天表現與漲跌幅"""
     try:
         market = yf.Ticker('^TWII')
-        df_market = market.history(period='5d')
+        df_market = market.history(period='100d')
+        
+        if TEST_MODE:
+            df_market = filter_by_test_date(df_market, TEST_DATE)
+
         if len(df_market) < 2:
             return 0.0, "中性"
         
@@ -141,7 +164,7 @@ STOCKS_TO_TRACK = {
     "2308.TW": "台達電", "2301.TW": "光寶科", "2385.TW": "群光", "6412.TW": "群電", 
     "1519.TW": "華城", "1503.TW": "士電", "1513.TW": "中興電", "1514.TW": "亞力", 
     "6282.TW": "康舒", "3090.TW": "全漢", "3032.TW": "偉訓", "3078.TWO": "僑威", 
-    "6203.TWO": "海韻电", "3540.TW": "曜越",
+    "6203.TWO": "海韻電", "3540.TW": "曜越",
     
     # 10. 高階 CCL、銅箔、PCB 與 ABF 載板
     "2383.TW": "台光電", "8383.TWO": "金居", "6213.TW": "台燿", "3037.TW": "欣興", 
@@ -171,9 +194,9 @@ def generate_stock_report():
     signals_list = []
     tickers = list(STOCKS_TO_TRACK.keys())
     
-    print("⏳ 正在批次下載 60 日技術面資料...")
+    print("⏳ 正在批次下載 100 日技術面資料...")
     try:
-        data = yf.download(tickers, period='60d', group_by='ticker', threads=True, progress=False)
+        data = yf.download(tickers, period='100d', group_by='ticker', threads=True, progress=False)
     except Exception as e:
         print(f"❌ 批次下載失敗: {e}")
         return ["📊 【Price Action 選股推播】\n\n系統下載資料發生異常。"]
@@ -189,6 +212,12 @@ def generate_stock_report():
 
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
+
+            # -------------------------------------------------------------
+            # 【測試模式處理】
+            if TEST_MODE:
+                df = filter_by_test_date(df, TEST_DATE)
+            # -------------------------------------------------------------
 
             if len(df) < 40:
                 continue
@@ -233,12 +262,9 @@ def generate_stock_report():
                                    (float(latest['Open']) <= float(prev_1['Close'])) and \
                                    (pct_change >= 2.0)
 
-            # 4. 優化版·真破底翻（Spring）：
-            # 條件：近 5 天曾探 20 天新低，且今日強勢收過昨高 AND 收復破底前之平台低點 (收復支撐線)
+            # 4. 真破底翻（Spring）：近 5 天探 20 天新低，且今日收過昨高 AND 收復破底前平台低點
             low_20d = float(df_40['Low'].iloc[-20:].min())
             min_low_in_5d = float(d1_5['Low'].min())
-            
-            # 取出破底前 20 天之平台相對低點 (做為收復指標)
             support_20d_before = float(df_40['Low'].iloc[-25:-5].min()) if len(df_40) >= 25 else low_20d
             
             is_spring = is_real_body and \
@@ -254,15 +280,12 @@ def generate_stock_report():
                 continue
 
             # =========================================================
-            # 【第二階段：6~40 天軟條件】（VCP 與結構標註優化）
+            # 【第二階段：6~40 天軟條件】（VCP 與結構標註）
             # =========================================================
             tags = []
 
-            # 1. 嚴謹版 VCP 波動收縮結構：
-            # (A) 價格收縮：後半段振幅 < 前半段振幅 0.7 倍
-            # (B) 量能沉澱：後半段均量 < 前半段均量 0.8 倍 (籌碼鎖死、賣壓竭盡)
-            part1 = df_40.iloc[-40:-15]  # 前 25 天
-            part2 = df_40.iloc[-15:-1]   # 近 14 天 (發動前夕)
+            part1 = df_40.iloc[-40:-15]
+            part2 = df_40.iloc[-15:-1]
 
             vol_p1 = (float(part1['High'].max()) - float(part1['Low'].min())) / float(part1['Low'].min())
             vol_p2 = (float(part2['High'].max()) - float(part2['Low'].min())) / float(part2['Low'].min())
@@ -270,11 +293,9 @@ def generate_stock_report():
             volume_mean_p1 = float(part1['Volume'].mean())
             volume_mean_p2 = float(part2['Volume'].mean())
 
-            # 同時符合價格收縮與成交量急凍量縮沉澱
             if (vol_p2 < vol_p1 * 0.7) and (vol_p1 < 0.35) and (volume_mean_p2 < volume_mean_p1 * 0.8):
                 tags.append("🔥 VCP波動量縮收縮")
 
-            # 2. 箱型沉澱突破 (6~40天高低震幅 < 15%)
             range_6_40 = (float(d6_40['High'].max()) - float(d6_40['Low'].min())) / float(d6_40['Low'].min())
             if range_6_40 < 0.15:
                 tags.append("📦 箱型沉澱突破")
@@ -282,9 +303,8 @@ def generate_stock_report():
             if not tags:
                 tags.append("⚡ 短線強勢爆量")
 
-            # 組合短線觸發名稱與決定「今日突破價」
             triggers = []
-            breakthrough_price = float(prev_1['High'])  # 預設突破昨高
+            breakthrough_price = float(prev_1['High'])
             
             if is_bullish_engulfing: 
                 triggers.append("看漲吞噬")
@@ -300,27 +320,21 @@ def generate_stock_report():
             # =========================================================
             # 【第三階段：計算 1-3 條關鍵頸線 與 多次測試不破精準停損價】
             # =========================================================
-            
-            # 計算精準防守頸線與下退 2 個 Tick 停損價
             neckline_price, stop_loss_price = calculate_precise_stop_loss(df_40, window=15)
             
-            # 抓取過去 60 日的高點分佈，利用 75%、85%、95% 分位數抓出多條不同高度的密集頸線
             recent_highs = df['High'].iloc[-60:]
             p75 = float(np.percentile(recent_highs, 75))
             p85 = float(np.percentile(recent_highs, 85))
             p95 = float(np.percentile(recent_highs, 95))
             
-            # 過濾掉數值過於接近的頸線（確保 1~3 條各自有區隔），並由低到高排列
             raw_necks = [p75, p85, p95]
             unique_necks = []
             for n in sorted(raw_necks):
-                if not unique_necks or abs(n - unique_necks[-1]) > (curr_close * 0.015): # 間距大於 1.5%
+                if not unique_necks or abs(n - unique_necks[-1]) > (curr_close * 0.015):
                     unique_necks.append(round(n, 1))
             
-            # 取出最多 3 條頸線
             neck_str = " / ".join([str(n) for n in unique_necks[:3]])
 
-            # 組裝個股回報訊息 (取消 20日支撐，清晰呈現精準停損價)
             stock_info = (
                 f"▪ {stock_name} ({pure_code})\n"
                 f"  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n"
@@ -336,9 +350,8 @@ def generate_stock_report():
             print(f"⚠️ 處理 {ticker} ({stock_name}) 時發生錯誤: {e}")
             pass
 
-    today_str = datetime.now().strftime('%Y-%m-%d')
+    date_label = TEST_DATE if TEST_MODE else datetime.now().strftime('%Y-%m-%d')
     
-    # 訊息第一則：大盤看板與風控狀態
     if market_chg <= -1.5:
         market_warning = "🚨 【風控注意】大盤重挫逾 1.5%，系統性風險高，建議縮小部位或暫緩多方進場。"
     elif market_chg < 0:
@@ -350,13 +363,12 @@ def generate_stock_report():
         f"╔══════════════════╗\n"
         f"  📊 Price Action 盤後策略看板\n"
         f"╚══════════════════╝\n"
-        f"📅 日期：{today_str}\n"
+        f"📅 日期：{date_label}\n"
         f"📈 加權指數：{market_chg:+.2f}%\n"
         f"----------------------------------\n"
         f"{market_warning}"
     )
 
-    # 訊息第二則：個股篩選清單與統計
     if signals_list:
         signals_body = "\n\n".join(signals_list)
     else:
