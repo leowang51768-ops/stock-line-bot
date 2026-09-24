@@ -81,7 +81,13 @@ def check_market_trend():
     """檢查大盤 (^TWII) 當天表現與漲跌幅"""
     try:
         market = yf.Ticker('^TWII')
-        df_market = market.history(period='5d')
+        df_market = market.history(period='10d')
+        
+        # -------------------------------------------------------------
+        # 【手動測試】強制將大盤資料截斷至 2026-09-24
+        df_market = df_market[df_market.index <= '2026-09-24']
+        # -------------------------------------------------------------
+
         if len(df_market) < 2:
             return 0.0, "中性"
         
@@ -189,6 +195,11 @@ def generate_stock_report():
 
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
+
+            # -------------------------------------------------------------
+            # 【手動測試】強制將個股資料截斷至 2026-09-24
+            df = df[df.index <= '2026-09-24']
+            # -------------------------------------------------------------
 
             if len(df) < 40:
                 continue
@@ -306,7 +317,7 @@ def generate_stock_report():
             
             neck_str = " / ".join([str(n) for n in unique_necks[:3]])
 
-            # 組裝個股回報訊息 (已移除 20日支撐)
+            # 組裝個股回報訊息
             stock_info = (
                 f"▪ {stock_name} ({pure_code})\n"
                 f"  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n"
@@ -322,7 +333,8 @@ def generate_stock_report():
             print(f"⚠️ 處理 {ticker} ({stock_name}) 時發生錯誤: {e}")
             pass
 
-    today_str = datetime.now().strftime('%Y-%m-%d')
+    # 訊息抬頭顯示 2026-09-24 (手動測試)
+    test_date_str = "2026-09-24 (歷史測試)"
     
     # 訊息第一則：大盤看板與風控狀態
     if market_chg <= -1.5:
@@ -336,7 +348,7 @@ def generate_stock_report():
         f"╔══════════════════╗\n"
         f"  📊 Price Action 盤後策略看板\n"
         f"╚══════════════════╝\n"
-        f"📅 日期：{today_str}\n"
+        f"📅 日期：{test_date_str}\n"
         f"📈 加權指數：{market_chg:+.2f}%\n"
         f"----------------------------------\n"
         f"{market_warning}"
