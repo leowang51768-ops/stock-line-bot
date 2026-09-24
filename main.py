@@ -78,14 +78,14 @@ def send_line_messages(msg_list):
     return response.status_code
 
 def check_market_trend():
-    """檢查大盤 (^TWII) 截至 2026-09-24 當天表現與漲跌幅"""
+    """檢查大盤 (^TWII) 當天表現與漲跌幅"""
     try:
         market = yf.Ticker('^TWII')
-        df_market = market.history(period='30d')
+        df_market = market.history(period='100d')
         
-        # 轉為標準無時區日期，過濾出 <= 2026-09-24 的數據
-        df_market.index = pd.to_datetime(df_market.index).tz_localize(None).floor('D')
-        df_market = df_market[df_market.index <= '2026-09-24']
+        # 時區處理並截斷至 2026-09-24
+        df_market.index = df_market.index.tz_localize(None)
+        df_market = df_market[df_market.index.strftime('%Y-%m-%d') <= '2026-09-24']
 
         if len(df_market) < 2:
             return 0.0, "中性"
@@ -176,9 +176,9 @@ def generate_stock_report():
     signals_list = []
     tickers = list(STOCKS_TO_TRACK.keys())
     
-    print("⏳ 正在批次下載 80 日技術面資料...")
+    print("⏳ 正在批次下載 100 日技術面資料...")
     try:
-        data = yf.download(tickers, period='80d', group_by='ticker', threads=True, progress=False)
+        data = yf.download(tickers, period='100d', group_by='ticker', threads=True, progress=False)
     except Exception as e:
         print(f"❌ 批次下載失敗: {e}")
         return ["📊 【Price Action 選股推播】\n\n系統下載資料發生異常。"]
@@ -196,9 +196,9 @@ def generate_stock_report():
                 df.columns = df.columns.get_level_values(0)
 
             # -------------------------------------------------------------
-            # 【測試條件】：強制將個股資料轉為標準日期並留存到 2026-09-24 止
-            df.index = pd.to_datetime(df.index).tz_localize(None).floor('D')
-            df = df[df.index <= '2026-09-24']
+            # 【精準截斷至 2026-09-24 止】
+            df.index = df.index.tz_localize(None)
+            df = df[df.index.strftime('%Y-%m-%d') <= '2026-09-24']
             # -------------------------------------------------------------
 
             if len(df) < 40:
