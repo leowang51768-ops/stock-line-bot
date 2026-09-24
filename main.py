@@ -83,10 +83,10 @@ def check_market_trend():
         market = yf.Ticker('^TWII')
         df_market = market.history(period='10d')
         
-        # -------------------------------------------------------------
-        # 【手動測試】強制將大盤資料截斷至 2026-09-24
-        df_market = df_market[df_market.index <= '2026-09-24']
-        # -------------------------------------------------------------
+        # 修正：去除時區並截斷至 2026-09-24 23:59:59
+        if df_market.index.tz is not None:
+            df_market.index = df_market.index.tz_localize(None)
+        df_market = df_market[df_market.index <= '2026-09-24 23:59:59']
 
         if len(df_market) < 2:
             return 0.0, "中性"
@@ -197,8 +197,10 @@ def generate_stock_report():
                 df.columns = df.columns.get_level_values(0)
 
             # -------------------------------------------------------------
-            # 【手動測試】強制將個股資料截斷至 2026-09-24
-            df = df[df.index <= '2026-09-24']
+            # 【修正】移除時區並精確過濾至 2026-09-24 當天 23:59:59 包含當天數據
+            if df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
+            df = df[df.index <= '2026-09-24 23:59:59']
             # -------------------------------------------------------------
 
             if len(df) < 40:
@@ -333,8 +335,7 @@ def generate_stock_report():
             print(f"⚠️ 處理 {ticker} ({stock_name}) 時發生錯誤: {e}")
             pass
 
-    # 訊息抬頭顯示 2026-09-24 (手動測試)
-    test_date_str = "2026-09-24 (歷史測試)"
+    test_date_str = "2026-09-24"
     
     # 訊息第一則：大盤看板與風控狀態
     if market_chg <= -1.5:
