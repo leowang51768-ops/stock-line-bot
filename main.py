@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 import datetime
 import pandas as pd
@@ -101,14 +102,17 @@ def check_market_trend():
         market = yf.Ticker('^TWII')
         df_market = market.history(period='100d')
         
+        if df_market.index.tz is not None:
+            df_market.index = df_market.index.tz_localize(None)
+        
         if TEST_MODE:
             df_market = filter_by_test_date(df_market, TEST_DATE)
 
         if len(df_market) < 2:
             return 0.0, "中性"
         
-        prev_close = df_market['Close'].iloc[-2]
-        curr_close = df_market['Close'].iloc[-1]
+        prev_close = float(df_market['Close'].iloc[-2])
+        curr_close = float(df_market['Close'].iloc[-1])
         market_chg = (curr_close - prev_close) / prev_close * 100
         
         return round(market_chg, 2), "正常"
@@ -194,10 +198,18 @@ def generate_stock_report():
     tickers = list(STOCKS_TO_TRACK.keys())
     
     print("⏳ 正在批次下載 100 日技術面資料...")
-    try:
-        data = yf.download(tickers, period='100d', group_by='ticker', threads=True, progress=False)
-    except Exception as e:
-        print(f"❌ 批次下載失敗: {e}")
+    data = pd.DataFrame()
+    for retry in range(3):
+        try:
+            data = yf.download(tickers, period='100d', group_by='ticker', threads=True, progress=False)
+            if not data.empty:
+                break
+        except Exception as e:
+            print(f"⚠️ 嘗試下載資料失敗 (第 {retry+1} 次): {e}")
+            time.sleep(2)
+
+    if data.empty:
+        print("❌ 批次下載失敗或回傳空值")
         return ["📊 【Price Action 選股推播】\n\n系統下載資料發生異常。"]
 
     for ticker, stock_name in STOCKS_TO_TRACK.items():
