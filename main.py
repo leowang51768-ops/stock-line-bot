@@ -78,21 +78,14 @@ def send_line_messages(msg_list):
     return response.status_code
 
 def check_market_trend():
-    """檢查大盤 (^TWII) 當天表現與漲跌幅"""
+    """檢查大盤 (^TWII) 9/24 表現與漲跌幅"""
     try:
         market = yf.Ticker('^TWII')
         df_market = market.history(period='10d')
         
-        # 修正：去除時區並截斷至 2026-09-24 23:59:59
-        if df_market.index.tz is not None:
-            df_market.index = df_market.index.tz_localize(None)
-        df_market = df_market[df_market.index <= '2026-09-24 23:59:59']
-
-        if len(df_market) < 2:
-            return 0.0, "中性"
-        
-        prev_close = df_market['Close'].iloc[-2]
-        curr_close = df_market['Close'].iloc[-1]
+        # 抓取倒數第 2 筆（9/24當天）與倒數第 3 筆（9/23前一天）
+        prev_close = df_market['Close'].iloc[-3]
+        curr_close = df_market['Close'].iloc[-2]
         market_chg = (curr_close - prev_close) / prev_close * 100
         
         return round(market_chg, 2), "正常"
@@ -196,18 +189,16 @@ def generate_stock_report():
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
-            # -------------------------------------------------------------
-            # 【修正】移除時區並精確過濾至 2026-09-24 當天 23:59:59 包含當天數據
-            if df.index.tz is not None:
-                df.index = df.index.tz_localize(None)
-            df = df[df.index <= '2026-09-24 23:59:59']
-            # -------------------------------------------------------------
-
-            if len(df) < 40:
+            if len(df) < 41:
                 continue
 
             df = df.sort_index(ascending=True)
-            df_40 = df.iloc[-40:].copy()
+            
+            # -------------------------------------------------------------
+            # 【關鍵修改】：取倒數第 41 筆至倒數第 2 筆（精準回到 2026-09-24 當天）
+            df_40 = df.iloc[-41:-1].copy()
+            # -------------------------------------------------------------
+            
             pure_code = ticker.split('.')[0]
 
             # 計算 5 日均線與 5 日均量
@@ -306,7 +297,7 @@ def generate_stock_report():
             neckline_price, stop_loss_price = calculate_precise_stop_loss(df_40, window=15)
             
             # 抓取過去 60 日的高點分佈，抓出 1~3 條關鍵頸線
-            recent_highs = df['High'].iloc[-60:]
+            recent_highs = df['High'].iloc[-61:-1]
             p75 = float(np.percentile(recent_highs, 75))
             p85 = float(np.percentile(recent_highs, 85))
             p95 = float(np.percentile(recent_highs, 95))
