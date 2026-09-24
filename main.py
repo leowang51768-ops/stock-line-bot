@@ -4,54 +4,11 @@ import datetime
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime, date
+from datetime import datetime
 
 # 從 GitHub Secrets 讀取金鑰
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 LINE_USER_ID = os.getenv('LINE_USER_ID')
-
-def get_tick_size(price: float) -> float:
-    """根據台股升降單位 (Tick Size) 規則計算單一 Tick 價值"""
-    if price < 10:
-        return 0.01
-    elif price < 50:
-        return 0.05
-    elif price < 100:
-        return 0.1
-    elif price < 500:
-        return 0.5
-    elif price < 1000:
-        return 1.0
-    else:
-        return 5.0
-
-def calculate_precise_stop_loss(df_40: pd.DataFrame, window: int = 15) -> tuple:
-    """
-    計算【多次重複跌不下去的頸線】與【下退 2 Ticks 的精準停損價】
-    """
-    recent_df = df_40.tail(window).copy()
-    lows = recent_df['Low'].values
-    current_price = float(recent_df['Close'].iloc[-1])
-    tick = get_tick_size(current_price)
-    
-    # 尋找近 window 日內，相差在 2 個 Tick 之內且多次測試不破的低點區間
-    sorted_lows = sorted(lows)
-    neckline_price = None
-    
-    for i in range(len(sorted_lows) - 1):
-        if abs(sorted_lows[i+1] - sorted_lows[i]) <= (2 * tick):
-            # 取較低者作為多次重複跌不下去的強支撐頸線
-            neckline_price = float(sorted_lows[i])
-            break
-            
-    # 若無明顯多次重覆測試，則取近 N 日絕對最低點作為支撐
-    if neckline_price is None:
-        neckline_price = float(min(lows))
-        
-    # 精準停損價：防守牆下方扣除 2 個 Ticks 的容錯誤差，避免被假跌破洗盤
-    stop_loss_price = neckline_price - (2 * tick)
-    
-    return round(neckline_price, 2), round(stop_loss_price, 2)
 
 def send_line_messages(msg_list):
     """一次發送多則訊息（LINE Bot API 支援單次最多 5 則，並處理單則 5000 字限制）"""
@@ -81,12 +38,7 @@ def check_market_trend():
     """檢查大盤 (^TWII) 當天表現與漲跌幅"""
     try:
         market = yf.Ticker('^TWII')
-        df_market = market.history(period='100d')
-        
-        # 轉為純 date 比對，精準留下 <= 2026-09-24 包含當天
-        target_test_date = date(2026, 9, 24)
-        df_market = df_market[df_market.index.map(lambda x: x.date()) <= target_test_date]
-
+        df_market = market.history(period='5d')
         if len(df_market) < 2:
             return 0.0, "中性"
         
@@ -176,14 +128,12 @@ def generate_stock_report():
     signals_list = []
     tickers = list(STOCKS_TO_TRACK.keys())
     
-    print("⏳ 正在批次下載 100 日技術面資料...")
+    print("⏳ 正在批次下載 60 日技術面資料...")
     try:
-        data = yf.download(tickers, period='100d', group_by='ticker', threads=True, progress=False)
+        data = yf.download(tickers, period='60d', group_by='ticker', threads=True, progress=False)
     except Exception as e:
         print(f"❌ 批次下載失敗: {e}")
         return ["📊 【Price Action 選股推播】\n\n系統下載資料發生異常。"]
-
-    target_test_date = date(2026, 9, 24)
 
     for ticker, stock_name in STOCKS_TO_TRACK.items():
         try:
@@ -196,11 +146,6 @@ def generate_stock_report():
 
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
-
-            # -------------------------------------------------------------
-            # 【手動測試修正】：用純 Date 物件過濾，鎖定 2026-09-24 當天收盤資料
-            df = df[df.index.map(lambda x: x.date()) <= target_test_date]
-            # -------------------------------------------------------------
 
             if len(df) < 40:
                 continue
@@ -249,6 +194,7 @@ def generate_stock_report():
             low_20d = float(df_40['Low'].iloc[-20:].min())
             min_low_in_5d = float(d1_5['Low'].min())
             
+            # 條件：近5天曾探 20天新低，且今日強勢收過昨高與前高
             is_spring = is_real_body and \
                         (curr_close > float(prev_1['High'])) and \
                         (pct_change >= 2.5) and \
@@ -299,11 +245,9 @@ def generate_stock_report():
             trigger_text = "/".join(triggers)
 
             # =========================================================
-            # 【第三階段：計算 1~3 條關鍵頸線 與 多次測試不破精準停損價】
+            # 【計算 20日支撐 與 1 ~ 3 條關鍵頸線（高點反壓區）】
             # =========================================================
-            
-            # 計算精準防守頸線與下退 2 個 Tick 停損價
-            neckline_price, stop_loss_price = calculate_precise_stop_loss(df_40, window=15)
+            support_20d = float(df_40['Low'].iloc[-20:].min())
             
             # 抓取過去 60 日的高點分佈，利用 75%、85%、95% 分位數抓出多條不同高度的密集頸線
             recent_highs = df['High'].iloc[-60:]
@@ -321,14 +265,12 @@ def generate_stock_report():
             # 取出最多 3 條頸線
             neck_str = " / ".join([str(n) for n in unique_necks[:3]])
 
-            # 組裝個股回報訊息（已取消 20日支撐，加入精準防守停損價）
             stock_info = (
                 f"▪ {stock_name} ({pure_code})\n"
                 f"  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n"
                 f"  🎯 今日突破價：{breakthrough_price:.1f}\n"
                 f"  ⚔️ 關鍵頸線(1~3條)：{neck_str}\n"
-                f"  🛡️ 多次防守頸線：{neckline_price:.1f}\n"
-                f"  🛑 精準防守停損：{stop_loss_price:.1f} (跌破-2Ticks離場)\n"
+                f"  🛡️ 20日支撐：{support_20d:.1f}\n"
                 f"  💡 訊號：{trigger_text} ({tag_text})"
             )
             signals_list.append(stock_info)
@@ -337,7 +279,7 @@ def generate_stock_report():
             print(f"⚠️ 處理 {ticker} ({stock_name}) 時發生錯誤: {e}")
             pass
 
-    test_date_str = "2026-09-24"
+    today_str = datetime.now().strftime('%Y-%m-%d')
     
     # 訊息第一則：大盤看板與風控狀態
     if market_chg <= -1.5:
@@ -351,7 +293,7 @@ def generate_stock_report():
         f"╔══════════════════╗\n"
         f"  📊 Price Action 盤後策略看板\n"
         f"╚══════════════════╝\n"
-        f"📅 日期：{test_date_str}\n"
+        f"📅 日期：{today_str}\n"
         f"📈 加權指數：{market_chg:+.2f}%\n"
         f"----------------------------------\n"
         f"{market_warning}"
@@ -369,7 +311,7 @@ def generate_stock_report():
         f"{signals_body}\n\n"
         f"----------------------------------\n"
         f"🔍 追蹤標的總數：{len(STOCKS_TO_TRACK)} 檔\n"
-        f"🛡️ 策略提醒：跌破『精準防守停損』或破 5 日線即刻執行紀律停損。"
+        f"🛡️ 策略提醒：觸發標的請嚴守 5 日線移動停利。"
     )
 
     return [msg_part1, msg_part2]
