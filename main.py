@@ -203,11 +203,11 @@ def generate_stock_report():
     for ticker, stock_name in STOCKS_TO_TRACK.items():
         try:
             if len(tickers) == 1:
-                df = data.dropna()
+                df = data.dropna(how='all')
             else:
                 if ticker not in data or data[ticker].empty:
                     continue
-                df = data[ticker].dropna()
+                df = data[ticker].dropna(how='all')
 
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
