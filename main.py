@@ -10,6 +10,49 @@ from datetime import datetime
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 LINE_USER_ID = os.getenv('LINE_USER_ID')
 
+def get_tick_size(price: float) -> float:
+    """根據台股升降單位 (Tick Size) 規則計算單一 Tick 價值"""
+    if price < 10:
+        return 0.01
+    elif price < 50:
+        return 0.05
+    elif price < 100:
+        return 0.1
+    elif price < 500:
+        return 0.5
+    elif price < 1000:
+        return 1.0
+    else:
+        return 5.0
+
+def calculate_precise_stop_loss(df_40: pd.DataFrame, window: int = 15) -> tuple:
+    """
+    計算【多次重複跌不下去的頸線】與【下退 2 Ticks 的精準停損價】
+    """
+    recent_df = df_40.tail(window).copy()
+    lows = recent_df['Low'].values
+    current_price = float(recent_df['Close'].iloc[-1])
+    tick = get_tick_size(current_price)
+    
+    # 尋找近 window 日內，相差在 2 個 Tick 之內且多次測試不破的低點區間
+    sorted_lows = sorted(lows)
+    neckline_price = None
+    
+    for i in range(len(sorted_lows) - 1):
+        if abs(sorted_lows[i+1] - sorted_lows[i]) <= (2 * tick):
+            # 取較低者作為多次重複跌不下去的強支撐頸線
+            neckline_price = float(sorted_lows[i])
+            break
+            
+    # 若無明顯多次重覆測試，則取近 N 日絕對最低點作為支撐
+    if neckline_price is None:
+        neckline_price = float(min(lows))
+        
+    # 精準停損價：防守牆下方扣除 2 個 Ticks 的容錯誤差，避免被假跌破洗盤
+    stop_loss_price = neckline_price - (2 * tick)
+    
+    return round(neckline_price, 2), round(stop_loss_price, 2)
+
 def send_line_messages(msg_list):
     """一次發送多則訊息（LINE Bot API 支援單次最多 5 則，並處理單則 5000 字限制）"""
     if not LINE_ACCESS_TOKEN or not LINE_USER_ID:
@@ -194,7 +237,6 @@ def generate_stock_report():
             low_20d = float(df_40['Low'].iloc[-20:].min())
             min_low_in_5d = float(d1_5['Low'].min())
             
-            # 條件：近5天曾探 20天新低，且今日強勢收過昨高與前高
             is_spring = is_real_body and \
                         (curr_close > float(prev_1['High'])) and \
                         (pct_change >= 2.5) and \
@@ -207,13 +249,13 @@ def generate_stock_report():
                 continue
 
             # =========================================================
-            # 【第二階段：6~40 天軟條件】（真正的 VCP 與結構標註）
+            # 【第二階段：6~40 天軟條件】（VCP 與結構標註）
             # =========================================================
             tags = []
 
-            # 1. 真正的 VCP 波動收縮結構：前半段振幅與後半段振幅比對（後半段收縮至 70% 以下）
-            part1 = df_40.iloc[-40:-15]  # 前 25 天
-            part2 = df_40.iloc[-15:-1]   # 近 14 天
+            # VCP 波動收縮結構
+            part1 = df_40.iloc[-40:-15]
+            part2 = df_40.iloc[-15:-1]
 
             vol_p1 = (float(part1['High'].max()) - float(part1['Low'].min())) / float(part1['Low'].min())
             vol_p2 = (float(part2['High'].max()) - float(part2['Low'].min())) / float(part2['Low'].min())
@@ -221,7 +263,7 @@ def generate_stock_report():
             if (vol_p2 < vol_p1 * 0.7) and (vol_p1 < 0.35):
                 tags.append("🔥 VCP波動收縮")
 
-            # 2. 箱型沉澱突破 (6~40天高低震幅 < 15%)
+            # 箱型沉澱突破
             range_6_40 = (float(d6_40['High'].max()) - float(d6_40['Low'].min())) / float(d6_40['Low'].min())
             if range_6_40 < 0.15:
                 tags.append("📦 箱型沉澱突破")
@@ -229,9 +271,8 @@ def generate_stock_report():
             if not tags:
                 tags.append("⚡ 短線強勢爆量")
 
-            # 組合短線觸發名稱與決定「今日突破價」
             triggers = []
-            breakthrough_price = float(prev_1['High'])  # 預設突破昨高
+            breakthrough_price = float(prev_1['High'])
             
             if is_bullish_engulfing: 
                 triggers.append("看漲吞噬")
@@ -245,32 +286,34 @@ def generate_stock_report():
             trigger_text = "/".join(triggers)
 
             # =========================================================
-            # 【計算 20日支撐 與 1 ~ 3 條關鍵頸線（高點反壓區）】
+            # 【第三階段：計算 1-3 條關鍵頸線 與 多次測試不破精準停損價】
             # =========================================================
-            support_20d = float(df_40['Low'].iloc[-20:].min())
             
-            # 抓取過去 60 日的高點分佈，利用 75%、85%、95% 分位數抓出多條不同高度的密集頸線
+            # 計算精準防守頸線與下退 2 個 Tick 停損價
+            neckline_price, stop_loss_price = calculate_precise_stop_loss(df_40, window=15)
+            
+            # 抓取過去 60 日的高點分佈，抓出 1~3 條關鍵頸線
             recent_highs = df['High'].iloc[-60:]
             p75 = float(np.percentile(recent_highs, 75))
             p85 = float(np.percentile(recent_highs, 85))
             p95 = float(np.percentile(recent_highs, 95))
             
-            # 過濾掉數值過於接近的頸線（確保 1~3 條各自有區隔），並由低到高排列
             raw_necks = [p75, p85, p95]
             unique_necks = []
             for n in sorted(raw_necks):
-                if not unique_necks or abs(n - unique_necks[-1]) > (curr_close * 0.015): # 間距大於 1.5%
+                if not unique_necks or abs(n - unique_necks[-1]) > (curr_close * 0.015):
                     unique_necks.append(round(n, 1))
             
-            # 取出最多 3 條頸線
             neck_str = " / ".join([str(n) for n in unique_necks[:3]])
 
+            # 組裝個股回報訊息 (已移除 20日支撐)
             stock_info = (
                 f"▪ {stock_name} ({pure_code})\n"
                 f"  💰 {curr_close:.1f}元 | 漲幅 {pct_change:+.2f}% | 量增 {vol_ratio:.1f}倍\n"
                 f"  🎯 今日突破價：{breakthrough_price:.1f}\n"
                 f"  ⚔️ 關鍵頸線(1~3條)：{neck_str}\n"
-                f"  🛡️ 20日支撐：{support_20d:.1f}\n"
+                f"  🛡️ 多次防守頸線：{neckline_price:.1f}\n"
+                f"  🛑 精準防守停損：{stop_loss_price:.1f} (跌破-2Ticks離場)\n"
                 f"  💡 訊號：{trigger_text} ({tag_text})"
             )
             signals_list.append(stock_info)
@@ -311,7 +354,7 @@ def generate_stock_report():
         f"{signals_body}\n\n"
         f"----------------------------------\n"
         f"🔍 追蹤標的總數：{len(STOCKS_TO_TRACK)} 檔\n"
-        f"🛡️ 策略提醒：觸發標的請嚴守 5 日線移動停利。"
+        f"🛡️ 策略提醒：跌破『精準防守停損』或破 5 日線即刻執行紀律停損。"
     )
 
     return [msg_part1, msg_part2]
