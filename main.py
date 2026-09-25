@@ -11,8 +11,8 @@ from datetime import datetime, date
 # ⚙️ 【測試開關與設定】
 # 手動測試歷史日期時改為 True；排程自動推播時改為 False
 # =========================================================
-TEST_MODE = False          # True: 開啟歷史測試 / False: 恢復每日自動推播
-TEST_DATE = "2026-09-24"   # 想測試的日期 (YYYY-MM-DD)
+TEST_MODE = False           # True: 開啟歷史測試 / False: 恢復每日自動推播
+TEST_DATE = "2026-09-24"    # 想測試的日期 (YYYY-MM-DD)
 # =========================================================
 
 # 從 GitHub Secrets 讀取金鑰
@@ -36,34 +36,34 @@ def get_tick_size(price: float) -> float:
 
 def calculate_precise_stop_loss(df_40: pd.DataFrame, window: int = 15) -> tuple:
     """
-    計算【多次重複跌不下去的頸線】與【下退 2 Ticks 的精準停損價】
+    優化版：採用 Tick 區間頻率統計，尋找【多次重複跌不下去的真·頸線】與【下退 2 Ticks 精準停損價】
     """
     recent_df = df_40.tail(window).copy()
     lows = recent_df['Low'].values
     current_price = float(recent_df['Close'].iloc[-1])
     tick = get_tick_size(current_price)
     
-    # 尋找近 window 日內，相差在 2 個 Tick 之內且多次測試不破的低點區間
-    sorted_lows = sorted(lows)
-    neckline_price = None
+    # 將所有低點歸接至最接近的 Tick 單位進行頻率統計
+    rounded_lows = [round(l / tick) * tick for l in lows]
+    val_counts = pd.Series(rounded_lows).value_counts()
     
-    for i in range(len(sorted_lows) - 1):
-        if abs(sorted_lows[i+1] - sorted_lows[i]) <= (2 * tick):
-            # 取較低者作為多次重複跌不下去的強支撐頸線
-            neckline_price = float(sorted_lows[i])
-            break
-            
-    # 若無明顯多次重覆測試，則取近 N 日絕對最低點作為支撐
-    if neckline_price is None:
+    # 尋找出現頻率 >= 2 次的密集低點區間
+    frequent_lows = val_counts[val_counts >= 2]
+    
+    if not frequent_lows.empty:
+        # 取出現次數最多者；若次數相同則取較高者作為支撐頸線
+        neckline_price = float(frequent_lows.index[0])
+    else:
+        # 若無密集區間，則取視窗內絕對最低點
         neckline_price = float(min(lows))
         
-    # 精準停損價：防守牆下方扣除 2 個 Ticks 的容錯誤差，避免被假跌破洗盤
+    # 精準停損價：防守牆下方扣除 2 個 Ticks 的容錯誤差
     stop_loss_price = neckline_price - (2 * tick)
     
     return round(neckline_price, 2), round(stop_loss_price, 2)
 
 def send_line_messages(msg_list):
-    """一次發送多則訊息（LINE Bot API 支援單次最多 5 則，並處理單則 5000 字限制）"""
+    """一次發送多則訊息（LINE Bot API 支援單次最多 5 則）"""
     if not LINE_ACCESS_TOKEN or not LINE_USER_ID:
         print("⚠️ 缺少 LINE Token 或 User ID，跳過 LINE 發送步驟。")
         return 0
@@ -75,7 +75,7 @@ def send_line_messages(msg_list):
     }
     
     final_messages = msg_list[:5]
-    messages_payload = [{'type': 'text', 'text': m[:4500]} for m in final_messages]
+    messages_payload = [{'type': 'text', 'text': m} for m in final_messages]
     
     payload = {
         'to': LINE_USER_ID,
@@ -100,7 +100,7 @@ def check_market_trend():
     """檢查大盤 (^TWII) 當天表現與漲跌幅"""
     try:
         market = yf.Ticker('^TWII')
-        df_market = market.history(period='100d')
+        df_market = market.history(period='180d')
         
         if df_market.index.tz is not None:
             df_market.index = df_market.index.tz_localize(None)
@@ -186,7 +186,7 @@ STOCKS_TO_TRACK = {
     "3231.TW": "緯創", "2317.TW": "鴻海", "2356.TW": "英業達", "4938.TW": "和碩", 
     "2376.TW": "技嘉", "2357.TW": "華碩", "2377.TW": "微星", "3515.TW": "華擎", 
     "3706.TW": "神達", "6933.TW": "AMAX-KY", "2395.TW": "研華", "6414.TW": "樺漢", 
-    "6166.TW": "凌華", "5289.TWO": "宜鼎", "2359.TW": "所羅門", "4585.TWO": "達明", 
+    "6166.TW": "凌華", "5289.TWO": "宜庭", "2359.TW": "所羅門", "4585.TWO": "達明", 
     "6215.TW": "和椿", "2324.TW": "仁寶", "2312.TW": "金寶"
 }
 
@@ -197,11 +197,11 @@ def generate_stock_report():
     signals_list = []
     tickers = list(STOCKS_TO_TRACK.keys())
     
-    print("⏳ 正在批次下載 100 日技術面資料...")
+    print("⏳ 正在批次下載 180 日技術面資料...")
     data = pd.DataFrame()
     for retry in range(3):
         try:
-            data = yf.download(tickers, period='100d', group_by='ticker', threads=True, progress=False)
+            data = yf.download(tickers, period='180d', group_by='ticker', threads=True, progress=False)
             if not data.empty:
                 break
         except Exception as e:
@@ -214,23 +214,18 @@ def generate_stock_report():
 
     for ticker, stock_name in STOCKS_TO_TRACK.items():
         try:
-            if len(tickers) == 1:
-                df = data.dropna(how='all')
-            else:
-                if ticker not in data or data[ticker].empty:
+            # 穩健解析 MultiIndex DataFrame
+            if isinstance(data.columns, pd.MultiIndex):
+                if ticker not in data.columns.levels[0]:
                     continue
-                df = data[ticker].dropna(how='all')
+                df = data[ticker].dropna(how='all').copy()
+            else:
+                df = data.dropna(how='all').copy()
 
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-
-            # -------------------------------------------------------------
-            # 【測試模式處理】
             if TEST_MODE:
                 df = filter_by_test_date(df, TEST_DATE)
-            # -------------------------------------------------------------
 
-            if len(df) < 40:
+            if len(df) < 45:
                 continue
 
             df = df.sort_index(ascending=True)
@@ -249,17 +244,18 @@ def generate_stock_report():
 
             curr_close = float(latest['Close'])
             curr_vol = float(latest['Volume'])
-            ma5_vol = float(latest['Vol_MA5'])
             
+            # 修正：爆量標準改以「前日 5MA 均量」為對比基準
+            prev_ma5_vol = float(prev_1['Vol_MA5'])
             pct_change = (curr_close - float(prev_1['Close'])) / float(prev_1['Close']) * 100
-            vol_ratio = curr_vol / ma5_vol if ma5_vol > 0 else 1.0
+            vol_ratio = curr_vol / prev_ma5_vol if prev_ma5_vol > 0 else 1.0
 
             # =========================================================
             # 【第一階段：1~5 天硬條件】（嚴格量價扣板機門檻）
             # =========================================================
             
-            # 1. 嚴格量能：成交量 >= 1000 張，且大於 5MA 均量 1.3 倍
-            cond_vol = (curr_vol >= 1000) and (curr_vol > ma5_vol * 1.3)
+            # 1. 嚴格量能：成交量 >= 1000 張，且大於前日 5MA 均量 1.3 倍
+            cond_vol = (curr_vol >= 1000) and (curr_vol > prev_ma5_vol * 1.3)
             
             # 2. 均線與實體：站上 5MA，實體漲幅 >= 1.0%
             cond_ma5 = curr_close > float(latest['MA5'])
@@ -274,11 +270,9 @@ def generate_stock_report():
                                    (pct_change >= 2.0)
 
             # 4. 優化版·真破底翻（Spring）：
-            # 從未切割的完整 df 抓取破底發生前的平台低點 (避免索引越界)
             low_20d = float(df_40['Low'].iloc[-20:].min())
             min_low_in_5d = float(d1_5['Low'].min())
-            
-            support_20d_before = float(df['Low'].iloc[-45:-5].min()) if len(df) >= 45 else low_20d
+            support_20d_before = float(df['Low'].iloc[-45:-5].min())
             
             is_spring = is_real_body and \
                         (curr_close > float(prev_1['High'])) and \
@@ -288,7 +282,6 @@ def generate_stock_report():
 
             has_trigger = is_bullish_engulfing or is_spring
 
-            # 硬門檻過濾
             if not (cond_ma5 and cond_vol and has_trigger):
                 continue
 
@@ -296,7 +289,6 @@ def generate_stock_report():
             # 【第二階段：6~40 天軟條件】（VCP 與結構標註優化）
             # =========================================================
             tags = []
-
             part1 = df_40.iloc[-40:-15]
             part2 = df_40.iloc[-15:-1]
 
@@ -321,17 +313,14 @@ def generate_stock_report():
             
             if is_bullish_engulfing: 
                 triggers.append("看漲吞噬")
-                breakthrough_price = float(prev_1['High'])
-                
             if is_spring: 
                 triggers.append("破底翻")
-                breakthrough_price = float(prev_1['High'])
 
             tag_text = " | ".join(tags)
             trigger_text = "/".join(triggers)
 
             # =========================================================
-            # 【第三階段：計算 1-3 條關鍵頸線 與 多次測試不破精準停損價】
+            # 【第三階段：精算頸線與多次測試不破精準停損價】
             # =========================================================
             neckline_price, stop_loss_price = calculate_precise_stop_loss(df_40, window=15)
             
@@ -372,31 +361,41 @@ def generate_stock_report():
     else:
         market_warning = "🟢 【盤勢狀態】大盤穩健，有利順勢多方操作。"
 
-    msg_part1 = (
+    msg_header = (
         f"╔══════════════════╗\n"
         f"  📊 Price Action 盤後策略看板\n"
         f"╚══════════════════╝\n"
         f"📅 日期：{date_label}\n"
         f"📈 加權指數：{market_chg:+.2f}%\n"
         f"----------------------------------\n"
-        f"{market_warning}"
+        f"{market_warning}\n"
+        f"📋 精選個股 (共 {len(signals_list)} 檔)\n"
+        f"----------------------------------"
     )
 
-    if signals_list:
-        signals_body = "\n\n".join(signals_list)
+    # 動態字數拆分邏輯，確保發送訊息不超過 3000 字/則
+    messages = []
+    current_msg = msg_header
+    
+    if not signals_list:
+        current_msg += "\n\n☕ 今日無符合【1-5天嚴格觸發+站上5MA】之標的，保持耐心觀望。"
+        messages.append(current_msg)
     else:
-        signals_body = "☕ 今日無符合【1-5天嚴格觸發+站上5MA】之標的，保持耐心觀望。"
+        for stock_str in signals_list:
+            if len(current_msg) + len(stock_str) + 2 > 3000:
+                messages.append(current_msg)
+                current_msg = "📋 【精選觸發個股明細 (續)】\n----------------------------------\n\n" + stock_str
+            else:
+                current_msg += "\n\n" + stock_str
+        
+        current_msg += (
+            f"\n\n----------------------------------\n"
+            f"🔍 追蹤標的總數：{len(STOCKS_TO_TRACK)} 檔\n"
+            f"🛡️ 策略提醒：跌破『精準防守停損』或破 5 日線即刻執行紀律停損。"
+        )
+        messages.append(current_msg)
 
-    msg_part2 = (
-        f"📋 【精選觸發個股明細】(共 {len(signals_list)} 檔)\n"
-        f"----------------------------------\n\n"
-        f"{signals_body}\n\n"
-        f"----------------------------------\n"
-        f"🔍 追蹤標的總數：{len(STOCKS_TO_TRACK)} 檔\n"
-        f"🛡️ 策略提醒：跌破『精準防守停損』或破 5 日線即刻執行紀律停損。"
-    )
-
-    return [msg_part1, msg_part2]
+    return messages
 
 if __name__ == '__main__':
     messages = generate_stock_report()
