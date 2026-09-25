@@ -1,10 +1,10 @@
 import os
 import time
-import requests
 import datetime
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import requests
 from datetime import datetime, date
 
 # =========================================================
@@ -35,32 +35,83 @@ def get_tick_size(price: float) -> float:
         return 5.0
 
 def calculate_precise_stop_loss(df_40: pd.DataFrame, window: int = 15) -> tuple:
-    """
-    優化版：採用 Tick 區間頻率統計，尋找【多次重複跌不下去的真·頸線】與【下退 2 Ticks 精準停損價】
-    """
+    """採用 Tick 區間頻率統計，尋找【多次重複跌不下去的真·頸線】與【下退 2 Ticks 精準停損價】"""
     recent_df = df_40.tail(window).copy()
     lows = recent_df['Low'].values
     current_price = float(recent_df['Close'].iloc[-1])
     tick = get_tick_size(current_price)
     
-    # 將所有低點歸接至最接近的 Tick 單位進行頻率統計
     rounded_lows = [round(l / tick) * tick for l in lows]
     val_counts = pd.Series(rounded_lows).value_counts()
-    
-    # 尋找出現頻率 >= 2 次的密集低點區間
     frequent_lows = val_counts[val_counts >= 2]
     
     if not frequent_lows.empty:
-        # 取出現次數最多者；若次數相同則取較高者作為支撐頸線
         neckline_price = float(frequent_lows.index[0])
     else:
-        # 若無密集區間，則取視窗內絕對最低點
         neckline_price = float(min(lows))
         
-    # 精準停損價：防守牆下方扣除 2 個 Ticks 的容錯誤差
     stop_loss_price = neckline_price - (2 * tick)
-    
     return round(neckline_price, 2), round(stop_loss_price, 2)
+
+def get_finmind_institutional_data(stock_id: str, target_date_str: str) -> dict:
+    """
+    從 FinMind 免費 API 抓取近 10 日三大法人買賣超資料
+    回傳：外資買超張數、投信買超張數、法人合計買超張數、投信連續買超天數
+    """
+    try:
+        url = "https://api.finmindtrade.com/api/v4/data"
+        start_date = (pd.to_datetime(target_date_str) - pd.Timedelta(days=15)).strftime('%Y-%m-%d')
+        parameter = {
+            "dataset": "TaiwanStockInstitutionalInvestorsBuySell",
+            "data_id": stock_id,
+            "start_date": start_date,
+            "end_date": target_date_str,
+        }
+        resp = requests.get(url, params=parameter, timeout=5)
+        data = resp.json()
+        
+        if data.get("msg") != "success" or not data.get("data"):
+            return {"foreign": 0, "investment_trust": 0, "total": 0, "sitc_consecutive_days": 0}
+
+        df_inst = pd.DataFrame(data["data"])
+        if df_inst.empty:
+            return {"foreign": 0, "investment_trust": 0, "total": 0, "sitc_consecutive_days": 0}
+
+        # 整理外資與投信資料 (單位轉為：張)
+        df_inst['buy_sell_sheets'] = (df_inst['buy'] - df_inst['sell']) // 1000
+        
+        pivoted = df_inst.pivot(index='date', columns='name', values='buy_sell_sheets').fillna(0)
+        
+        if pivoted.empty:
+            return {"foreign": 0, "investment_trust": 0, "total": 0, "sitc_consecutive_days": 0}
+
+        # 最新一天資料
+        latest_date = pivoted.index[-1]
+        latest_row = pivoted.loc[latest_date]
+
+        foreign_buy = int(latest_row.get("Foreign_Investor", 0) + latest_row.get("Foreign_Dealer_Self", 0))
+        sitc_buy = int(latest_row.get("Investment_Trust", 0))
+        dealer_buy = int(latest_row.get("Dealer_Self", 0) + latest_row.get("Dealer_Hedging", 0))
+        total_buy = foreign_buy + sitc_buy + dealer_buy
+
+        # 計算投信連續買超天數
+        sitc_series = pivoted.get("Investment_Trust", pd.Series(dtype=float))
+        sitc_consecutive = 0
+        for val in reversed(sitc_series.values):
+            if val > 0:
+                sitc_consecutive += 1
+            else:
+                break
+
+        return {
+            "foreign": foreign_buy,
+            "investment_trust": sitc_buy,
+            "total": total_buy,
+            "sitc_consecutive_days": sitc_consecutive
+        }
+    except Exception as e:
+        print(f"⚠️ 抓取 {stock_id} 籌碼資料失敗: {e}")
+        return {"foreign": 0, "investment_trust": 0, "total": 0, "sitc_consecutive_days": 0}
 
 def send_line_messages(msg_list):
     """一次發送多則訊息（LINE Bot API 支援單次最多 5 則）"""
@@ -186,7 +237,7 @@ STOCKS_TO_TRACK = {
     "3231.TW": "緯創", "2317.TW": "鴻海", "2356.TW": "英業達", "4938.TW": "和碩", 
     "2376.TW": "技嘉", "2357.TW": "華碩", "2377.TW": "微星", "3515.TW": "華擎", 
     "3706.TW": "神達", "6933.TW": "AMAX-KY", "2395.TW": "研華", "6414.TW": "樺漢", 
-    "6166.TW": "凌華", "5289.TWO": "宜庭", "2359.TW": "所羅門", "4585.TWO": "達明", 
+    "6166.TW": "凌華", "5289.TWO": "宜鼎", "2359.TW": "所羅門", "4585.TWO": "達明", 
     "6215.TW": "和椿", "2324.TW": "仁寶", "2312.TW": "金寶"
 }
 
@@ -212,9 +263,10 @@ def generate_stock_report():
         print("❌ 批次下載失敗或回傳空值")
         return ["📊 【Price Action 選股推播】\n\n系統下載資料發生異常。"]
 
+    date_label = TEST_DATE if TEST_MODE else datetime.now().strftime('%Y-%m-%d')
+
     for ticker, stock_name in STOCKS_TO_TRACK.items():
         try:
-            # 穩健解析 MultiIndex DataFrame
             if isinstance(data.columns, pd.MultiIndex):
                 if ticker not in data.columns.levels[0]:
                     continue
@@ -232,7 +284,6 @@ def generate_stock_report():
             df_40 = df.iloc[-40:].copy()
             pure_code = ticker.split('.')[0]
 
-            # 計算 5 日均線與 5 日均量
             df_40['MA5'] = df_40['Close'].rolling(window=5).mean()
             df_40['Vol_MA5'] = df_40['Volume'].rolling(window=5).mean()
 
@@ -244,32 +295,23 @@ def generate_stock_report():
 
             curr_close = float(latest['Close'])
             curr_vol = float(latest['Volume'])
-            
-            # 修正：爆量標準改以「前日 5MA 均量」為對比基準
             prev_ma5_vol = float(prev_1['Vol_MA5'])
+            
             pct_change = (curr_close - float(prev_1['Close'])) / float(prev_1['Close']) * 100
             vol_ratio = curr_vol / prev_ma5_vol if prev_ma5_vol > 0 else 1.0
 
-            # =========================================================
-            # 【第一階段：1~5 天硬條件】（嚴格量價扣板機門檻）
-            # =========================================================
-            
-            # 1. 嚴格量能：成交量 >= 1000 張，且大於前日 5MA 均量 1.3 倍
+            # 1~5 天硬門檻
             cond_vol = (curr_vol >= 1000) and (curr_vol > prev_ma5_vol * 1.3)
-            
-            # 2. 均線與實體：站上 5MA，實體漲幅 >= 1.0%
             cond_ma5 = curr_close > float(latest['MA5'])
             body_pct = (curr_close - float(latest['Open'])) / float(latest['Open']) * 100
             is_real_body = body_pct >= 1.0
 
-            # 3. 看漲吞噬：今日長紅包覆昨黑棒，且當日漲幅 >= 2.0%
             is_bullish_engulfing = is_real_body and \
                                    (float(prev_1['Close']) < float(prev_1['Open'])) and \
                                    (curr_close >= float(prev_1['Open'])) and \
                                    (float(latest['Open']) <= float(prev_1['Close'])) and \
                                    (pct_change >= 2.0)
 
-            # 4. 優化版·真破底翻（Spring）：
             low_20d = float(df_40['Low'].iloc[-20:].min())
             min_low_in_5d = float(d1_5['Low'].min())
             support_20d_before = float(df['Low'].iloc[-45:-5].min())
@@ -285,9 +327,26 @@ def generate_stock_report():
             if not (cond_ma5 and cond_vol and has_trigger):
                 continue
 
-            # =========================================================
-            # 【第二階段：6~40 天軟條件】（VCP 與結構標註優化）
-            # =========================================================
+            # 抓取 FinMind 籌碼面資料
+            chip_data = get_finmind_institutional_data(pure_code, date_label)
+            time.sleep(0.2)  # 防存取過快
+
+            # 籌碼面指標與標籤
+            chip_tags = []
+            if chip_data['total'] > 0:
+                chip_tags.append(f"🏛️ 法人合買+{chip_data['total']}張")
+            elif chip_data['total'] < -1000:
+                chip_tags.append(f"⚠️ 法人跳船{chip_data['total']}張")
+
+            if chip_data['investment_trust'] > 0:
+                if chip_data['sitc_consecutive_days'] >= 2:
+                    chip_tags.append(f"🔥 投信連{chip_data['sitc_consecutive_days']}買(+{chip_data['investment_trust']}張)")
+                else:
+                    chip_tags.append(f"投信轉買+{chip_data['investment_trust']}張")
+
+            chip_str = " | ".join(chip_tags) if chip_tags else "法人觀望/微幅調整"
+
+            # 6~40 天軟條件
             tags = []
             part1 = df_40.iloc[-40:-15]
             part2 = df_40.iloc[-15:-1]
@@ -299,14 +358,14 @@ def generate_stock_report():
             volume_mean_p2 = float(part2['Volume'].mean())
 
             if (vol_p2 < vol_p1 * 0.7) and (vol_p1 < 0.35) and (volume_mean_p2 < volume_mean_p1 * 0.8):
-                tags.append("🔥 VCP波動量縮收縮")
+                tags.append("🔥 VCP收縮")
 
             range_6_40 = (float(d6_40['High'].max()) - float(d6_40['Low'].min())) / float(d6_40['Low'].min())
             if range_6_40 < 0.15:
-                tags.append("📦 箱型沉澱突破")
+                tags.append("📦 箱型突破")
 
             if not tags:
-                tags.append("⚡ 短線強勢爆量")
+                tags.append("⚡ 短線爆量")
 
             triggers = []
             breakthrough_price = float(prev_1['High'])
@@ -319,9 +378,7 @@ def generate_stock_report():
             tag_text = " | ".join(tags)
             trigger_text = "/".join(triggers)
 
-            # =========================================================
-            # 【第三階段：精算頸線與多次測試不破精準停損價】
-            # =========================================================
+            # 計算頸線與精準停損價
             neckline_price, stop_loss_price = calculate_precise_stop_loss(df_40, window=15)
             
             recent_highs = df['High'].iloc[-60:]
@@ -344,7 +401,8 @@ def generate_stock_report():
                 f"  ⚔️ 關鍵頸線(1~3條)：{neck_str}\n"
                 f"  🛡️ 多次防守頸線：{neckline_price:.1f}\n"
                 f"  🛑 精準防守停損：{stop_loss_price:.1f} (跌破-2Ticks離場)\n"
-                f"  💡 訊號：{trigger_text} ({tag_text})"
+                f"  💡 技術訊號：{trigger_text} ({tag_text})\n"
+                f"  📊 法人籌碼：{chip_str}"
             )
             signals_list.append(stock_info)
 
@@ -352,8 +410,6 @@ def generate_stock_report():
             print(f"⚠️ 處理 {ticker} ({stock_name}) 時發生錯誤: {e}")
             pass
 
-    date_label = TEST_DATE if TEST_MODE else datetime.now().strftime('%Y-%m-%d')
-    
     if market_chg <= -1.5:
         market_warning = "🚨 【風控注意】大盤重挫逾 1.5%，系統性風險高，建議縮小部位或暫緩多方進場。"
     elif market_chg < 0:
@@ -363,7 +419,7 @@ def generate_stock_report():
 
     msg_header = (
         f"╔══════════════════╗\n"
-        f"  📊 Price Action 盤後策略看板\n"
+        f"  📊 PA + 法人籌碼策略看板\n"
         f"╚══════════════════╝\n"
         f"📅 日期：{date_label}\n"
         f"📈 加權指數：{market_chg:+.2f}%\n"
@@ -373,12 +429,11 @@ def generate_stock_report():
         f"----------------------------------"
     )
 
-    # 動態字數拆分邏輯，確保發送訊息不超過 3000 字/則
     messages = []
     current_msg = msg_header
     
     if not signals_list:
-        current_msg += "\n\n☕ 今日無符合【1-5天嚴格觸發+站上5MA】之標的，保持耐心觀望。"
+        current_msg += "\n\n☕ 今日無符合【PA觸發+站上5MA】之標的，保持耐心觀望。"
         messages.append(current_msg)
     else:
         for stock_str in signals_list:
@@ -391,7 +446,7 @@ def generate_stock_report():
         current_msg += (
             f"\n\n----------------------------------\n"
             f"🔍 追蹤標的總數：{len(STOCKS_TO_TRACK)} 檔\n"
-            f"🛡️ 策略提醒：跌破『精準防守停損』或破 5 日線即刻執行紀律停損。"
+            f"🛡️ 策略提醒：優先選擇有『🔥 投信連買』或『🏛️ 法人合買』背書的標的；跌破『精準防守停損』即刻離場。"
         )
         messages.append(current_msg)
 
